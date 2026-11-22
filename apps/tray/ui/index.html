@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>奶鸟俱乐部 · 校园公告</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="result.js" defer></script>
+  </head>
+  <body>
+    <header class="note-header" data-tauri-drag-region>
+      <h1 data-tauri-drag-region>校园公告</h1>
+      <button id="close-note" type="button" aria-label="收起便签" title="收起便签">×</button>
+    </header>
+    <main>
+      <p id="status" role="status">等待 DS 提交已确认的查询。</p>
+      <article id="result" hidden>
+        <h2 id="title"></h2>
+        <p id="summary"></p>
+        <dl>
+          <dt>来源</dt><dd id="source"></dd>
+          <dt>原文地址</dt><dd id="source-url"></dd>
+        </dl>
+      </article>
+    </main>
+  </body>
+</html>
