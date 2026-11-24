@@ -112,7 +112,7 @@
 - `POST /api/v1/demands/:id/complete` → 完成自己的需求，释放活跃名额，返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/:id/cancel` → 仅本人可操作；将需求置为 `cancelled`，同时将关联 `pending` 匹配置为 `cancelled` 并通知各方；返回 `200 {"demand": {...}}`。
 
-提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。用户明确选中的长期字段与推断标签分别用 `profileFields` 和 `inferredTags`，对应的 `localVersion`、`cloudVersion` 取自 `GET /api/v1/profile` 的 `updatedAt`。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。画像变更返回 `409 match_profile_changed`，同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
+提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。`profileFields` 将用户明确选中的长期字段映射到 `localProfile.fieldVersions[字段名].version`，例如 `{"preferences.food":2}`。用户明确选中的推断标签用 `inferredTags`，并带上 `cloudProfile.updatedAt` 作为 `cloudVersion`。两个来源均通过 `GET /api/v1/profile` 读取。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。所选字段被改动或删除，或所选标签的来源版本变化时，返回 `409 match_profile_changed`。同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
 
 ### 2.3 修改需求与查询版本历史
 

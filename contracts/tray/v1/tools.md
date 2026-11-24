@@ -57,9 +57,9 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 
 使用 `update-demand --confirmed --id …` 修改现有需求，可用 `--change-note` 记录说明。`--start` 和 `--end` 成对传入并打包为 `timeWindow`。`--party-min` 和 `--party-max` 打包为 `partySize`，沿用 `submit-demand` 的缺省规则。使用 `list-revisions --demand-id …` 查询版本历史。
 
-用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，并带上 `--local-version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上 `--cloud-version`。版本取自确认时 `get-profile` 的 `updatedAt`。用 `get-demand --id …` 查询原需求及其授权状态。
+用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，例如 `--profile-field preferences.food=2`，版本取自确认时 `get-profile` 的 `localProfile.fieldVersions[字段名].version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上该次读取的 `cloudProfile.updatedAt` 作为 `--cloud-version`。用 `get-demand --id …` 查询原需求及其授权状态。
 
-`sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。`localProfile.updatedAt` 用于单次匹配授权的画像版本校验。
+`sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。
 
 多设备编辑使用 `sync-profile-fields --confirmed --mutation-id … --changes-json …`。`changes` 按字段名填写 `{baseRevision, value}`。从 `localProfile.fieldVersions` 读取当前版本，版本缺省时用 `0`，删除时用 `value: null`。遇到 `profile_conflict` 时重新读取资料，将当前值和拟修改值交给成员选择。提交超时保留原编号和原字段编辑重试。
 

@@ -33,6 +33,13 @@ def positive_int(value):
     return number
 
 
+def versioned_field(value):
+    field, separator, version = value.rpartition("=")
+    if not separator:
+        raise argparse.ArgumentTypeError("expected FIELD=VERSION")
+    return required_text(field), positive_int(version)
+
+
 def json_object(value):
     try:
         result = json.loads(value, parse_constant=invalid_constant)
@@ -76,9 +83,9 @@ def parse_arguments():
         demand.add_argument("--expires-at", dest="expiresAt", type=required_text)
     submit.add_argument("--idempotency-key", dest="idempotencyKey", type=required_text)
     submit.add_argument("--single-match", dest="singleMatch", action="store_true")
-    submit.add_argument("--profile-field", dest="profileFields", type=required_text, action="append")
+    submit.add_argument("--profile-field", dest="profileFields", type=versioned_field, action="append",
+                        metavar="FIELD=VERSION")
     submit.add_argument("--inferred-tag", dest="inferredTags", type=required_text, action="append")
-    submit.add_argument("--local-version", dest="localVersion", type=required_text)
     submit.add_argument("--cloud-version", dest="cloudVersion", type=required_text)
     update.add_argument("--change-note", dest="changeNote", type=required_text)
 
@@ -145,7 +152,7 @@ def parse_arguments():
         single_match = payload.pop("singleMatch", False)
         scope = {
             field: payload.pop(field)
-            for field in ("profileFields", "inferredTags", "localVersion", "cloudVersion")
+            for field in ("profileFields", "inferredTags", "cloudVersion")
             if field in payload
         }
         if scope and not single_match:
@@ -153,10 +160,13 @@ def parse_arguments():
         if single_match:
             if "expiresAt" not in payload or "idempotencyKey" not in payload:
                 raise UsageError("--single-match requires --expires-at and --idempotency-key")
-            if ("profileFields" in scope) != ("localVersion" in scope):
-                raise UsageError("--profile-field and --local-version must be provided together")
             if ("inferredTags" in scope) != ("cloudVersion" in scope):
                 raise UsageError("--inferred-tag and --cloud-version must be provided together")
+            if "profileFields" in scope:
+                selected = scope["profileFields"]
+                scope["profileFields"] = dict(selected)
+                if len(scope["profileFields"]) != len(selected):
+                    raise UsageError("each --profile-field must name a different field")
             payload["matchAuthorization"] = {"purpose": "single_match", **scope}
         elif "idempotencyKey" not in payload:
             payload["idempotencyKey"] = str(uuid.uuid4())
