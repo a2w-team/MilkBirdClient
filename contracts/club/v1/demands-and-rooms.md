@@ -202,7 +202,7 @@
   - `room.ready`：payload 包含 `room`，需求归属取 `demandId` 或 `room.demandId`，可附带 `match`
   - `room.message`：payload 包含 `roomId` 与 `message`，可带 `demandId`；托盘也可根据既有群聊归属关联需求
   - `room.updated`：群聊状态变化，托盘刷新列表
-  - `demand.updated`：payload 包含 `demand`
+  - `demand.updated`：payload 包含 `demandId` 和 `demand`。收到已撤回的状态时刷新需求，并清除该需求的回应未读。
 
 响应 `200 OK`：
 ```json

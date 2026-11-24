@@ -107,6 +107,15 @@ impl Runtime {
         false
     }
 
+    fn clear_withdrawn_demand(&mut self, demand_id: &str) {
+        self.mark_demand_read(demand_id);
+        if self.last_notice.as_ref().is_some_and(|notice| {
+            notice.target.demand_id.as_deref() == Some(demand_id) && notice.target.room_id.is_none()
+        }) {
+            self.last_notice = None;
+        }
+    }
+
     fn remove_room_unread_from_demand(&mut self, demand_id: &str, count: u64) {
         if let Some(unread) = self.unread_by_demand.get_mut(demand_id) {
             unread.room_message_count -= count;
@@ -257,6 +266,14 @@ impl Runtime {
                         ..Target::default()
                     },
                 );
+            }
+            "demand.updated" => {
+                if data["demand"]["status"] == "cancelled"
+                    && let Some(demand_id) = demand_id
+                {
+                    self.clear_withdrawn_demand(&demand_id);
+                }
+                return false;
             }
             "match.proposed" => {
                 return self.notify_match(data.get("match").unwrap_or(data), demand_id, member_id);
@@ -637,8 +654,10 @@ impl Hub {
     pub fn cancel_demand(&self, id: &str) -> ApiResult {
         self.authenticated(
             |api, token| api.cancel_demand(token, id),
-            |runtime, _, _| {
-                runtime.mark_demand_read(id);
+            |runtime, value, _| {
+                if value["demand"]["status"] == "cancelled" {
+                    runtime.clear_withdrawn_demand(id);
+                }
                 Some(Update {
                     refresh_lists: true,
                     ..Update::default()
@@ -802,7 +821,7 @@ impl Hub {
                     runtime.last_seq = runtime.last_seq.max(last_seq);
                     if !events.is_empty() {
                         let refresh_lists = events.iter().any(|event| {
-                            matches!(event.kind.as_str(), "room.updated" | "match.updated")
+                            matches!(event.kind.as_str(), "room.updated" | "match.updated" | "demand.updated")
                         });
                         (self.publish)(Update {
                             events,
@@ -923,6 +942,28 @@ mod tests {
         assert_eq!(notice.body, "校园活动 · 时间合适");
         assert_eq!(notice.target.demand_id.as_deref(), Some("d1"));
         assert!(notice.target.room_id.is_none());
+    }
+
+    #[test]
+    fn withdrawal_update_clears_only_the_revoked_demands_response_unread() {
+        let mut runtime = Runtime::default();
+        response(&mut runtime, "d2");
+        message(&mut runtime, "r1", Some("d1"));
+        response(&mut runtime, "d1");
+
+        assert!(!receive(
+            &mut runtime,
+            "demand.updated",
+            json!({"demandId": "d1", "demand": {"status": "cancelled"}}),
+        ));
+        assert_eq!(
+            unread(&runtime),
+            json!({"total": 2, "demands": {
+                "d1": {"responseCount": 0, "roomMessageCount": 1},
+                "d2": {"responseCount": 1, "roomMessageCount": 0}
+            }, "rooms": {"r1": 1}})
+        );
+        assert!(runtime.last_notice.is_none());
     }
 
     #[test]
