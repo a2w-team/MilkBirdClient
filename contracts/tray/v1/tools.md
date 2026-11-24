@@ -58,6 +58,8 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 
 用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，并带上 `--local-version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上 `--cloud-version`。版本取自确认时 `get-profile` 的 `updatedAt`。用 `get-demand --id …` 查询原需求及其授权状态。
 
+`sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。`localProfile.updatedAt` 用于单次匹配授权的画像版本校验。
+
 ## 4. 程序驱动 vs LLM 驱动配合规则
 
 - **托盘后台事件驱动（无需 Agent 在场）**：登录后托盘自动长轮询 `GET /api/v1/events?after=<seq>&wait=25`。`demand.response`、`match.proposed` 和 `room.ready` 计入对应需求的回应未读，其他成员的 `room.message` 计入群聊消息未读。点击通知会打开对应页面并清除该目标的未读。
