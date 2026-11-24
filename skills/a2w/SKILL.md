@@ -19,6 +19,8 @@ disable-model-invocation: true
 
 提交或修改需求前，按[单次匹配授权](#单次匹配授权)补齐确认单和命令参数。以下 `update-demand` 流程仅适用于旧版无授权需求。已有授权的需求按该节撤回并重新确认。
 
+成员明确要保存或删除俱乐部资料时，使用[多设备资料编辑](#多设备资料编辑)的 `sync-profile-fields`。下文第 7 步的 `sync-profile` 仅适用于旧版托盘。
+
 ## 约饭、组队、求伴
 
 1. 只追问缺失或含糊的关键条件，例如做什么、校区或地点、时间和人数。多人需求要确认人数范围，用 `--party-min` 和 `--party-max` 提交。固定人数时两个值填一样。可以用本机画像提供建议。
@@ -42,3 +44,9 @@ disable-model-invocation: true
 - 提交超时时，用原确认单的完整参数、画像版本和幂等键重试。收到 `match_profile_changed` 时刷新画像，回读变更或失效的字段及标签，经用户重新确认后，才用新的幂等键提交。
 - 用 `get-demand --id …` 核对需求和授权。用户明确要求撤回时，用 `cancel-demand --id …`。已授权需求以回执的 `matchAuthorization.status` 为 `revoked` 为准，回执缺少授权状态时用 `get-demand` 复查。旧版无授权需求以 `demand.status` 为 `cancelled` 为准。
 - 条件变化时先检查原需求的授权。已绑定单次授权的需求需要用户确认撤回原请求，再按新确认单提交。旧版无授权需求可使用 `update-demand`。
+
+## 多设备资料编辑
+
+1. 运行 `get-profile`，只读取本次要保存或删除的俱乐部字段及其版本。每个字段从 `localProfile.fieldVersions` 取 `version`；从未写入的字段用 `0`。对于标记为 `deleted` 的字段，沿用删除后的版本，恢复值须由成员明确确认。
+2. 回读拟改的字段和值，请成员确认。确认后运行 `sync-profile-fields --confirmed --mutation-id … --changes-json …`。只发送本次确认的字段。字段名为 `campus`、`bio` 或如 `preferences.food` 的偏好键，每项填 `{baseRevision, value}`，删除时 `value` 填 `null`。
+3. 超时时复用原编号和原字段编辑。`profile_conflict` 表示整批编辑都未保存。重新读取资料，仅对版本冲突的字段展示当前值和拟改值，让成员选择。选择保留当前值时，从这次编辑移除该字段。其余已确认的编辑和获准覆盖的字段使用适用版本及新编号提交。收到 `idempotency_conflict` 时核对原确认单与当前资料，再由成员决定是否提交新编辑。

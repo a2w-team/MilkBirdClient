@@ -119,6 +119,16 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
             }
             hub.with_api(|api, token| api.sync_local_profile(token, &payload))
         }
+        "edit_profile_fields" => {
+            if payload["confirmed"] != true {
+                return Err(Failure::confirmation_required());
+            }
+            let mut body = payload;
+            body.as_object_mut()
+                .expect("confirmed field implies object")
+                .remove("confirmed");
+            hub.with_api(|api, token| api.edit_profile_fields(token, &body))
+        }
         "get_profile" => hub.with_api(|api, token| api.get_profile(token)),
         _ => Err(Failure::new("unknown_action", "未知的托盘操作。")),
     }

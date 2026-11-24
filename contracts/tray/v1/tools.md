@@ -48,6 +48,7 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | `vote_room_retention` | `{roomId, keep: boolean}` | 转发 `POST /api/v1/rooms/:id/retention-vote`，返回 Hub 的投票结果 |
 | `notify` | `{title, body, demandId?, matchId?, roomId?}` | 显示轻通知。点击后优先打开 `roomId`，其次打开 `demandId` 详情，其余情况打开需求列表。未读数由 Hub 事件维护。返回 `{}` |
 | `sync_local_profile` | `{campus?, preferences?, bio?}` | 转发 `PUT /api/v1/profile/local`，返回 `{localProfile}` |
+| `edit_profile_fields` | `{confirmed: true, mutationId, changes}` | 删除本机确认标记后转发 `PATCH /api/v1/profile/local`，返回 `{localProfile, fieldChanges}` |
 | `get_profile` | `{}` | 转发 `GET /api/v1/profile`，返回 `{localProfile, cloudProfile}` |
 
 `unreadByDemand` 以需求 ID 为键，值为 `{responseCount, roomMessageCount}`。`unreadByRoom` 以群聊 ID 为键，值为群消息未读数。`unreadCount` 等于所有 `responseCount` 加上所有群消息未读数。
@@ -59,6 +60,8 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，并带上 `--local-version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上 `--cloud-version`。版本取自确认时 `get-profile` 的 `updatedAt`。用 `get-demand --id …` 查询原需求及其授权状态。
 
 `sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。`localProfile.updatedAt` 用于单次匹配授权的画像版本校验。
+
+多设备编辑使用 `sync-profile-fields --confirmed --mutation-id … --changes-json …`。`changes` 按字段名填写 `{baseRevision, value}`。从 `localProfile.fieldVersions` 读取当前版本，版本缺省时用 `0`，删除时用 `value: null`。遇到 `profile_conflict` 时重新读取资料，将当前值和拟修改值交给成员选择。提交超时保留原编号和原字段编辑重试。
 
 ## 4. 程序驱动 vs LLM 驱动配合规则
 

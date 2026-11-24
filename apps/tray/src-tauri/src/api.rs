@@ -67,6 +67,7 @@ impl Failure {
             (StatusCode::CONFLICT, "room_expired") => "这个临时群已到期。",
             (StatusCode::CONFLICT, "demand_not_open") => "这条需求已结束，无法继续接收回应。",
             (StatusCode::CONFLICT, "match_profile_changed") => "画像已更新，请重新确认本次共享字段。",
+            (StatusCode::CONFLICT, "profile_conflict") => "资料已更新，请比较当前值和你的编辑后选择。",
             (StatusCode::CONFLICT, "idempotency_conflict") => "这次提交与原确认单不同，请重新确认后提交。",
             _ => message,
         };
@@ -380,6 +381,10 @@ impl Api {
 
     pub fn sync_local_profile(&self, token: &str, body: &Value) -> ApiResult {
         self.write(Method::PUT, &["profile", "local"], Some(body), Some(token))
+    }
+
+    pub fn edit_profile_fields(&self, token: &str, body: &Value) -> ApiResult {
+        self.write(Method::PATCH, &["profile", "local"], Some(body), Some(token))
     }
 
     pub fn get_profile(&self, token: &str) -> ApiResult {

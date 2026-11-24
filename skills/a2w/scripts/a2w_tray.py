@@ -33,13 +33,13 @@ def positive_int(value):
     return number
 
 
-def preferences(value):
+def json_object(value):
     try:
         result = json.loads(value, parse_constant=invalid_constant)
     except ValueError as error:
-        raise argparse.ArgumentTypeError("preferences must be a JSON object") from error
+        raise argparse.ArgumentTypeError("value must be a JSON object") from error
     if not isinstance(result, dict):
-        raise argparse.ArgumentTypeError("preferences must be a JSON object")
+        raise argparse.ArgumentTypeError("value must be a JSON object")
     return result
 
 
@@ -72,7 +72,7 @@ def parse_arguments():
             demand.add_argument(f"--{field}", type=required_text)
         demand.add_argument("--party-min", dest="partyMin", type=positive_int)
         demand.add_argument("--party-max", dest="partyMax", type=positive_int)
-        demand.add_argument("--preferences-json", dest="preferences", type=preferences)
+        demand.add_argument("--preferences-json", dest="preferences", type=json_object)
         demand.add_argument("--expires-at", dest="expiresAt", type=required_text)
     submit.add_argument("--idempotency-key", dest="idempotencyKey", type=required_text)
     submit.add_argument("--single-match", dest="singleMatch", action="store_true")
@@ -117,7 +117,11 @@ def parse_arguments():
     profile = command("sync-profile", "Sync approved profile details.", "sync_local_profile")
     profile.add_argument("--campus", type=required_text)
     profile.add_argument("--bio", type=required_text)
-    profile.add_argument("--preferences-json", dest="preferences", type=preferences)
+    profile.add_argument("--preferences-json", dest="preferences", type=json_object)
+    profile_fields = command("sync-profile-fields", "Save confirmed profile fields with their versions.", "edit_profile_fields")
+    profile_fields.add_argument("--confirmed", action="store_true", required=True)
+    profile_fields.add_argument("--mutation-id", dest="mutationId", required=True, type=required_text)
+    profile_fields.add_argument("--changes-json", dest="changes", required=True, type=json_object)
     command("get-profile", "Read your profile.")
 
     payload = vars(parser.parse_args())
