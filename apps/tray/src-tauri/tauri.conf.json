@@ -58,6 +58,7 @@
     ],
     "resources": {
       "../../../skills/a2w/SKILL.md": "skills/a2w/SKILL.md",
+      "../../../skills/a2w/references/demand-confirmation.md": "skills/a2w/references/demand-confirmation.md",
       "../../../skills/a2w/scripts/a2w_tray.py": "skills/a2w/scripts/a2w_tray.py"
     }
   }
