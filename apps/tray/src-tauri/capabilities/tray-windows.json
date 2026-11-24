@@ -1,6 +1,9 @@
 {
-  "identifier": "result-window",
-  "windows": ["main"],
+  "identifier": "tray-windows",
+  "windows": [
+    "main",
+    "toast"
+  ],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

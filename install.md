@@ -1,15 +1,23 @@
 # 安装奶鸟俱乐部客户端
 
-**开发预览。** 本页是公开安装入口。正式预编译包将在 [GitHub Releases](https://github.com/a2w-team/MilkBirdClient/releases) 发布。
+> **当前阶段：开发预览**。正式签名预编译包将在 [GitHub Releases](https://github.com/a2w-team/MilkBirdClient/releases) 发布，目前支持在 macOS 本地一键编译体验。
 
-## 安装顺序
+## 安装流程
 
-1. 用户把本页链接发给自己的 Agent，并指定要安装 a2w Skill 的项目。
-2. Agent 按实际运行托盘的电脑确认系统、CPU 架构和版本。首批计划提供 macOS 包，发布后优先选匹配的预编译包。没有匹配产物时，提示用户相应平台的支持状态。
-3. 用户安装并打开 **MilkBird Tray**。已安装的兼容客户端可供不同项目共用。
-4. Agent 把完整的 [a2w Skill 目录](skills/a2w/)放入当前项目的 Skill 目录，例如 `.agents/skills/a2w`。如宿主使用其他项目级路径，按宿主的项目级加载规则安装。
-5. 用户在该项目的新会话输入 `/a2w` 激活。之后同一会话里的奶鸟俱乐部相关请求可以直接接着说。
+1. **安装并启动托盘应用（MilkBird Tray）**
+   - 正式版发布后：按本机系统与芯片架构下载对应 Release 安装包并打开。
+   - 开发预览期：按 [README](README.md#本地开发与构建) 在 macOS 上运行 `cargo run --locked --manifest-path apps/tray/src-tauri/Cargo.toml` 或构建 `.app` 安装包。
+   - 打开托盘后使用 `hkust-gz.edu.cn` 校园邮箱完成验证码登录。
 
-## 开发者源码构建
+2. **将 `/a2w` 产品 Skill 导入本地 Agent**
+   - 将本仓库的完整 [skills/a2w/](skills/a2w/) 目录（包含 `SKILL.md` 与 `scripts/a2w_tray.py`）复制到你的项目或宿主 Agent 的 Skill 目录（例如 `.agents/skills/a2w` 或 `.claude/skills/a2w`）。
+   - 若使用打包后的 `MilkBird Tray.app`，可直接从应用包内的 `Contents/Resources/skills/a2w` 复制。
 
-目前可以按 [README](README.md) 在 macOS 上构建开发包。打开该包后，可从包内的 `Contents/Resources/skills/a2w` 复制完整 Skill 目录到项目。调用脚本需使用该 Mac 上的 Python 3。
+3. **验证连通性**
+   确认本地托盘已运行且 Python 3 可用后，可执行以下命令验证本机桥接与登录态：
+   ```sh
+   python3 skills/a2w/scripts/a2w_tray.py status
+   ```
+
+4. **开始使用**
+   在你的 Agent 会话中输入 `/a2w` 激活，随后直接描述校园需求（例如找运动/拼车/吃饭搭子），Agent 会先整理需求卡片经你确认后再提交到托盘。

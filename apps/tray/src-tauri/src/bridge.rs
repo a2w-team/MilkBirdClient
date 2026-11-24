@@ -1,66 +1,150 @@
-use serde::{Deserialize, Serialize};
-use std::env;
+use crate::api::{ApiResult, Failure};
+use crate::hub::{Hub, Target};
+use crate::session::ensure_private_dir;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::error::Error;
-use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-const MAX_MESSAGE: u64 = 8192;
-const ENDPOINT: &str = "api/v1/announcement-lookups";
+const MAX_FRAME: u64 = 32 * 1024;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Query {
-    campus: String,
-    topic: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Submission {
+struct ToolFrame {
     version: u8,
-    confirmed: bool,
-    query: Query,
+    action: String,
+    payload: serde_json::Map<String, Value>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Announcement {
-    id: String,
-    campus: String,
-    topic: String,
-    title: String,
-    summary: String,
-    source: String,
-    source_url: String,
-    published_at: String,
-    valid_until: String,
+fn parse(line: &[u8]) -> ApiResult<ToolFrame> {
+    if line.len() as u64 > MAX_FRAME
+        || line.last() != Some(&b'\n')
+        || line.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{')
+    {
+        return Err(Failure::invalid_request());
+    }
+    let frame: ToolFrame = serde_json::from_slice(line).map_err(|_| Failure::invalid_request())?;
+    if frame.version != 1 {
+        return Err(Failure::new(
+            "unsupported_version",
+            "工具协议版本不受支持。",
+        ));
+    }
+    Ok(frame)
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum LookupResult {
-    Matched {
-        announcement: Announcement,
-    },
-    NeedsClarification {
-        #[serde(rename = "missingFields")]
-        missing_fields: Vec<String>,
-    },
-    NoMatch,
-    Error {
-        code: String,
-    },
+fn optional_string<'a>(payload: &'a Value, field: &str) -> ApiResult<Option<&'a str>> {
+    match payload.get(field) {
+        None => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(Some)
+            .ok_or_else(Failure::invalid_request),
+    }
 }
 
-fn failure(code: &str) -> LookupResult {
-    LookupResult::Error { code: code.into() }
+fn required_string<'a>(payload: &'a Value, field: &str) -> ApiResult<&'a str> {
+    optional_string(payload, field)?.ok_or_else(Failure::invalid_request)
 }
 
-struct Bridge {
+fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
+    match action {
+        "status" => Ok(hub.status()),
+        "submit_demand" => hub.submit_demand(payload),
+        "update_demand" => {
+            let demand_id = required_string(&payload, "demandId")?.to_owned();
+            hub.update_demand(&demand_id, payload)
+        }
+        "list_demands" => {
+            let status = optional_string(&payload, "status")?;
+            hub.with_api(|api, token| api.list_demands(token, status))
+        }
+        "cancel_demand" => hub.cancel_demand(required_string(&payload, "demandId")?),
+        "complete_demand" => hub.complete_demand(required_string(&payload, "demandId")?),
+        "list_demand_revisions" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.list_demand_revisions(token, demand_id))
+        }
+        "list_demand_responses" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.list_demand_responses(token, demand_id))
+        }
+        "list_matches" => hub.with_api(|api, token| api.list_matches(token)),
+        "respond_match" => hub.respond_match(
+            required_string(&payload, "matchId")?,
+            required_string(&payload, "decision")?,
+        ),
+        "list_rooms" => hub.with_api(|api, token| api.list_rooms(token)),
+        "open_room" => hub.open_room(
+            required_string(&payload, "roomId")?.into(),
+            optional_string(&payload, "demandId")?.map(str::to_owned),
+        ),
+        "vote_room_retention" => hub.vote_room_retention(
+            required_string(&payload, "roomId")?,
+            payload["keep"]
+                .as_bool()
+                .ok_or_else(Failure::invalid_request)?,
+        ),
+        "notify" => hub.notify(
+            required_string(&payload, "title")?,
+            required_string(&payload, "body")?,
+            Target {
+                demand_id: optional_string(&payload, "demandId")?.map(str::to_owned),
+                match_id: optional_string(&payload, "matchId")?.map(str::to_owned),
+                room_id: optional_string(&payload, "roomId")?.map(str::to_owned),
+            },
+        ),
+        "sync_local_profile" => {
+            for (field, value) in payload.as_object().ok_or_else(Failure::invalid_request)? {
+                let valid = match field.as_str() {
+                    "campus" | "bio" => value.is_string(),
+                    "preferences" => value.is_object(),
+                    _ => false,
+                };
+                if !valid {
+                    return Err(Failure::invalid_request());
+                }
+            }
+            hub.with_api(|api, token| api.sync_local_profile(token, &payload))
+        }
+        "get_profile" => hub.with_api(|api, token| api.get_profile(token)),
+        _ => Err(Failure::new("unknown_action", "未知的托盘操作。")),
+    }
+}
+
+fn tool_error(error: Failure) -> Value {
+    json!({ "ok": false, "code": error.code, "message": error.message })
+}
+
+fn serve(stream: &mut UnixStream, hub: &Hub) -> io::Result<()> {
+    let mut line = Vec::new();
+    let mut reader = BufReader::new((&*stream).take(MAX_FRAME + 1));
+    reader.read_until(b'\n', &mut line)?;
+
+    let response = parse(&line).and_then(|frame| {
+        let data = dispatch(hub, &frame.action, Value::Object(frame.payload))?;
+        Ok(json!({ "ok": true, "action": frame.action, "data": data }))
+    });
+    let mut encoded = serde_json::to_vec(&response.unwrap_or_else(tool_error))?;
+    if encoded.len() as u64 >= MAX_FRAME {
+        encoded = serde_json::to_vec(&tool_error(Failure::new(
+            "response_too_large",
+            "结果超过托盘工具的大小上限。",
+        )))?;
+    }
+    encoded.push(b'\n');
+    stream.write_all(&encoded)
+}
+
+pub struct Bridge {
     listener: UnixListener,
     path: PathBuf,
     _lock: File,
@@ -72,124 +156,158 @@ impl Drop for Bridge {
     }
 }
 
-fn bind() -> Result<Bridge, Box<dyn Error>> {
-    let dir = env::var_os("MILKBIRD_TRAY_DIR")
-        .map(PathBuf::from)
-        .unwrap_or(PathBuf::from(env::var_os("HOME").ok_or("HOME is required")?).join(".milkbird"));
-    match DirBuilder::new().mode(0o700).create(&dir) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(err.into()),
-    }
-    let metadata = fs::symlink_metadata(&dir)?;
-    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err("tray socket directory must be private (0700) and not a symlink".into());
-    }
-
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(dir.join("tray.lock"))?;
-    lock.try_lock()?;
-    let path = dir.join("tray.sock");
-    match fs::symlink_metadata(&path) {
-        Ok(meta) if meta.file_type().is_socket() => fs::remove_file(&path)?,
-        Ok(_) => return Err("tray.sock exists and is not a socket".into()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
-    }
-    let listener = UnixListener::bind(&path)?;
-    let bridge = Bridge {
-        listener,
-        path,
-        _lock: lock,
-    };
-    fs::set_permissions(&bridge.path, fs::Permissions::from_mode(0o600))?;
-    Ok(bridge)
-}
-
-fn submit(
-    stream: &mut UnixStream,
-    client: &reqwest::blocking::Client,
-    url: &reqwest::Url,
-) -> Option<LookupResult> {
-    let mut line = Vec::new();
-    let mut reader = BufReader::new((&*stream).take(MAX_MESSAGE + 1));
-    reader.read_until(b'\n', &mut line).ok()?;
-    if line.len() as u64 > MAX_MESSAGE || line.last() != Some(&b'\n') {
-        return Some(failure("invalid_request"));
-    }
-    let Ok(frame) = serde_json::from_slice::<Submission>(&line) else {
-        return Some(failure("invalid_request"));
-    };
-    if frame.version != 1 || !frame.confirmed {
-        return Some(failure("confirmation_required"));
-    }
-
-    let response = match client.post(url.clone()).json(&frame.query).send() {
-        Ok(response) => response,
-        Err(_) => return Some(failure("server_unavailable")),
-    };
-    if response.status() == reqwest::StatusCode::BAD_REQUEST {
-        return Some(failure("invalid_request"));
-    }
-    if !response.status().is_success() {
-        return Some(failure("server_unavailable"));
-    }
-    let mut data = Vec::new();
-    if response
-        .take(MAX_MESSAGE + 1)
-        .read_to_end(&mut data)
-        .is_err()
-        || data.len() as u64 > MAX_MESSAGE
-    {
-        return Some(failure("invalid_response"));
-    }
-    Some(serde_json::from_slice(&data).unwrap_or_else(|_| failure("invalid_response")))
-}
-
-pub fn start(publish: impl Fn(LookupResult) + Send + 'static) -> Result<(), Box<dyn Error>> {
-    let origin = env::var("MILKBIRD_API_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
-    let base = reqwest::Url::parse(&origin)?;
-    let loopback = base.host_str() == Some("127.0.0.1") || base.host_str() == Some("localhost");
-    if (base.scheme() != "https" && !(base.scheme() == "http" && loopback))
-        || base.path() != "/"
-        || base.query().is_some()
-        || base.fragment().is_some()
-        || !base.username().is_empty()
-        || base.password().is_some()
-    {
-        return Err("MILKBIRD_API_ORIGIN must be an HTTPS origin or loopback HTTP origin".into());
-    }
-    let url = base.join(ENDPOINT)?;
-    let bridge = bind()?;
-    std::thread::Builder::new().name("tray-bridge".into()).spawn(move || {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .build()
-            .expect("HTTP client");
-        for stream in bridge.listener.incoming() {
-            let Ok(mut stream) = stream else { break };
-            if stream.set_read_timeout(Some(Duration::from_secs(2))).is_err() ||
-                stream.set_write_timeout(Some(Duration::from_secs(2))).is_err()
-            {
-                continue;
-            }
-            if let Some(result) = submit(&mut stream, &client, &url) {
-                // An invalid local frame must not open or overwrite the result window.
-                if !matches!(&result, LookupResult::Error { code } if code == "invalid_request" || code == "confirmation_required") {
-                    publish(result.clone());
-                }
-                if serde_json::to_writer(&mut stream, &result).is_ok() {
-                    let _ = stream.write_all(b"\n");
-                }
-            }
+impl Bridge {
+    pub fn bind(dir: &Path) -> Result<Self, Box<dyn Error>> {
+        ensure_private_dir(dir)?;
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(dir.join("tray.lock"))?;
+        lock.try_lock()?;
+        let path = dir.join("tray.sock");
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_socket() => fs::remove_file(&path)?,
+            Ok(_) => return Err("tray.sock exists and is not a socket".into()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
         }
-    })?;
-    Ok(())
+        let listener = UnixListener::bind(&path)?;
+        let bridge = Self {
+            listener,
+            path,
+            _lock: lock,
+        };
+        fs::set_permissions(&bridge.path, fs::Permissions::from_mode(0o600))?;
+        Ok(bridge)
+    }
+
+    pub fn start(self, hub: Arc<Hub>) -> io::Result<()> {
+        std::thread::Builder::new()
+            .name("tray-bridge".into())
+            .spawn(move || {
+                for stream in self.listener.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    if stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .is_ok()
+                        && stream
+                            .set_write_timeout(Some(Duration::from_secs(2)))
+                            .is_ok()
+                    {
+                        let _ = serve(&mut stream, &hub);
+                    }
+                }
+                // Keep the instance lock and socket cleanup for the lifetime of the listener.
+                drop(self);
+            })?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::Api;
+    use crate::session::{SessionStore, tests::TestDir};
+    use std::net::Shutdown;
+
+    fn logged_out_hub(dir: &TestDir) -> Hub {
+        let session = SessionStore::open(dir.path()).unwrap();
+        let api = Api::new("http://127.0.0.1:1").unwrap();
+        Hub::new(api, session, |_| panic!("request cannot update UI"))
+    }
+
+    fn reply(hub: &Hub, request: &[u8]) -> Value {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        client.write_all(request).unwrap();
+        client.shutdown(Shutdown::Write).unwrap();
+        serve(&mut server, hub).unwrap();
+        drop(server);
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        assert_eq!(response.last(), Some(&b'\n'));
+        serde_json::from_slice(&response).unwrap()
+    }
+
+    #[test]
+    fn invalid_and_legacy_frames_return_tool_errors() {
+        let dir = TestDir::new();
+        let hub = logged_out_hub(&dir);
+        let invalid_frames: &[&[u8]] = &[
+            b"{\"version\":1,\"confirmed\":true,\"query\":{\"campus\":\"East\",\"topic\":\"Exams\"}}\n",
+            b"not JSON\n",
+            b"[1,\"status\",{}]\n",
+            b"{\"version\":1,\"action\":\"status\"}\n",
+            b"{\"version\":1,\"action\":\"status\",\"payload\":[]}\n",
+            b"{\"version\":1,\"action\":\"status\",\"payload\":{},\"extra\":true}\n",
+            br#"{"version":1,"action":"status","payload":{}}"#,
+        ];
+        for frame in invalid_frames {
+            assert_eq!(
+                reply(&hub, frame),
+                json!({ "ok": false, "code": "invalid_request", "message": "请求格式有误。" })
+            );
+        }
+    }
+
+    #[test]
+    fn parses_tool_action_and_enforces_frame_limit() {
+        let mut line =
+            br#"{"version":1,"action":"notify","payload":{"title":"Title","body":"Body"}}"#
+                .to_vec();
+        line.resize(MAX_FRAME as usize - 1, b' ');
+        line.push(b'\n');
+        let frame = parse(&line).unwrap();
+        assert_eq!(frame.action, "notify");
+        assert_eq!(frame.payload["body"], "Body");
+        line.pop();
+        line.push(b' ');
+        line.push(b'\n');
+        assert_eq!(parse(&line).unwrap_err().code, "invalid_request");
+    }
+
+    #[test]
+    fn submit_requires_confirmation_and_login() {
+        let dir = TestDir::new();
+        let hub = logged_out_hub(&dir);
+        let submit = |confirmed| {
+            let frame = json!({ "version": 1, "action": "submit_demand", "payload": { "confirmed": confirmed } });
+            reply(&hub, format!("{frame}\n").as_bytes())
+        };
+        assert_eq!(submit(json!("true"))["code"], "confirmation_required");
+        assert_eq!(submit(json!(true))["code"], "not_logged_in");
+        let rooms = b"{\"version\":1,\"action\":\"list_rooms\",\"payload\":{}}\n";
+        assert_eq!(reply(&hub, rooms)["code"], "not_logged_in");
+
+        let status = b"{\"version\":1,\"action\":\"status\",\"payload\":{}}\n";
+        let response = reply(&hub, status);
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["action"], "status");
+        assert_eq!(response["data"]["loggedIn"], false);
+    }
+
+    #[test]
+    fn update_requires_explicit_confirmation_and_demand_id() {
+        let dir = TestDir::new();
+        let hub = logged_out_hub(&dir);
+        let update = |payload| {
+            let frame = json!({ "version": 1, "action": "update_demand", "payload": payload });
+            reply(&hub, format!("{frame}\n").as_bytes())
+        };
+        for payload in [
+            json!({"demandId": "d1"}),
+            json!({"demandId": "d1", "confirmed": false}),
+            json!({"demandId": "d1", "confirmed": "true"}),
+        ] {
+            assert_eq!(update(payload)["code"], "confirmation_required");
+        }
+        assert_eq!(update(json!({"confirmed": true}))["code"], "invalid_request");
+        assert_eq!(
+            update(json!({"demandId": "d1", "confirmed": true}))["code"],
+            "not_logged_in"
+        );
+    }
 }

@@ -3,25 +3,135 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>奶鸟俱乐部 · 校园公告</title>
+    <title>a2w</title>
     <link rel="stylesheet" href="style.css">
-    <script src="result.js" defer></script>
+    <script src="app.js" defer></script>
   </head>
   <body>
-    <header class="note-header" data-tauri-drag-region>
-      <h1 data-tauri-drag-region>校园公告</h1>
-      <button id="close-note" type="button" aria-label="收起便签" title="收起便签">×</button>
+    <header class="topbar" data-tauri-drag-region>
+      <div class="brand" data-tauri-drag-region>
+        <span class="brand-word" data-tauri-drag-region>a2w</span>
+        <span id="slot-dots" class="slot-dots" hidden aria-label="进行中需求槽位"></span>
+      </div>
+      <div class="topbar-actions">
+        <div id="account-wrap" class="account-wrap" hidden>
+          <button id="account-trigger" type="button" class="account-pill" aria-haspopup="menu" aria-expanded="false">
+            <span id="avatar-letter" class="avatar-dot"></span>
+            <span id="identity" class="identity-name"></span>
+          </button>
+          <div id="account-menu" class="popover-menu" role="menu" hidden>
+            <div class="popover-head">
+              <strong id="menu-name"></strong>
+              <span id="menu-email" class="muted"></span>
+            </div>
+            <button id="logout" type="button" class="menu-item danger" role="menuitem">退出登录</button>
+          </div>
+        </div>
+        <button id="close-window" type="button" class="icon-btn" aria-label="收起窗口" title="收起">−</button>
+      </div>
     </header>
-    <main>
-      <p id="status" role="status">等待 DS 提交已确认的查询。</p>
-      <article id="result" hidden>
-        <h2 id="title"></h2>
-        <p id="summary"></p>
-        <dl>
-          <dt>来源</dt><dd id="source"></dd>
-          <dt>原文地址</dt><dd id="source-url"></dd>
-        </dl>
-      </article>
+
+    <button id="notice" type="button" class="notice-banner" hidden>
+      <span class="notice-dot" aria-hidden="true"></span>
+      <span class="notice-text">
+        <strong id="notice-title"></strong>
+        <span id="notice-body"></span>
+      </span>
+      <span class="notice-arrow" aria-hidden="true">›</span>
+    </button>
+
+    <p id="feedback" class="feedback" role="status" hidden></p>
+
+    <main id="login" class="login" hidden>
+      <div class="login-card">
+        <span class="pill accent">HKUST-GZ</span>
+        <h2>登录 a2w</h2>
+        <form id="login-form" class="login-form">
+          <div class="field">
+            <label for="email">校园邮箱</label>
+            <div class="row">
+              <input id="email" type="email" autocomplete="email" placeholder="name@hkust-gz.edu.cn" required>
+              <button id="request-code" type="button" class="btn">获取验证码</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="code">验证码</label>
+            <input id="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字" required>
+          </div>
+          <div class="field">
+            <label for="display-name">昵称</label>
+            <input id="display-name" type="text" autocomplete="nickname" placeholder="选填">
+          </div>
+          <button id="sign-in" class="btn primary full-width" type="submit">进入</button>
+          <p id="login-hint" class="dev-hint" role="status" hidden></p>
+        </form>
+      </div>
     </main>
+
+    <main id="app" class="app" hidden>
+      <!-- Level 1: Demands -->
+      <section id="view-demands" class="page" aria-label="我的需求">
+        <div class="page-head">
+          <div class="head-left">
+            <h2>需求</h2>
+            <span id="slot-count" class="count-tag">0/3</span>
+          </div>
+          <button id="open-new-sheet" type="button" class="btn primary compact" title="通过 AI 发起新需求">+ 新建</button>
+        </div>
+        <div id="active-demands" class="card-list"></div>
+        <details id="history-wrap" class="history-wrap" hidden>
+          <summary id="history-summary">已结束</summary>
+          <div id="history-demands" class="card-list history-list"></div>
+        </details>
+      </section>
+
+      <!-- Level 2: Demand Detail -->
+      <section id="view-detail" class="page" aria-label="需求详情" hidden>
+        <div class="subbar">
+          <button id="back-to-demands" type="button" class="btn-quiet back-btn">‹ 需求</button>
+          <div id="detail-actions" class="subbar-actions"></div>
+        </div>
+        <div id="detail-header" class="detail-header"></div>
+        <div id="revision-panel" class="revision-panel" hidden></div>
+        <details id="detail-spec-wrap" class="spec-box">
+          <summary>条件详情</summary>
+          <div id="detail-spec" class="spec-rows"></div>
+        </details>
+        <div id="detail-responses" class="card-list"></div>
+      </section>
+
+      <!-- Level 3: Demand Group Chat -->
+      <section id="view-room" class="page room-page" aria-label="群聊" hidden>
+        <div class="subbar">
+          <button id="back-to-detail" type="button" class="btn-quiet back-btn">‹ 返回</button>
+          <div class="room-title-wrap">
+            <h3 id="room-title">群聊</h3>
+            <span id="room-meta" class="room-meta"></span>
+          </div>
+          <button id="leave-room" type="button" class="btn-quiet danger-text">退群</button>
+        </div>
+        <div id="retention-bar" class="retention-bar" hidden></div>
+        <div id="messages" class="messages" role="log" aria-label="聊天消息" aria-live="polite"></div>
+        <form id="message-form" class="message-form">
+          <label class="visually-hidden" for="message">消息</label>
+          <input id="message" required autocomplete="off" placeholder="输入消息…">
+          <button id="send-message" type="submit" class="btn primary">发送</button>
+        </form>
+      </section>
+    </main>
+
+    <!-- New Demand Command Sheet -->
+    <div id="new-sheet" class="sheet-backdrop" hidden>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+        <div class="sheet-head">
+          <h3 id="sheet-title">在 AI 会话中发起</h3>
+          <button id="close-sheet" type="button" class="icon-btn" aria-label="关闭">×</button>
+        </div>
+        <div class="code-box">
+          <code id="sample-cmd">/a2w 今晚想找 3 人在港科广吃火锅</code>
+          <button id="copy-cmd" type="button" class="btn code-copy">复制</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
