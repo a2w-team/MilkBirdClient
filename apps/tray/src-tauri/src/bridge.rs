@@ -67,6 +67,10 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
             let status = optional_string(&payload, "status")?;
             hub.with_api(|api, token| api.list_demands(token, status))
         }
+        "get_demand" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.get_demand(token, demand_id))
+        }
         "cancel_demand" => hub.cancel_demand(required_string(&payload, "demandId")?),
         "complete_demand" => hub.complete_demand(required_string(&payload, "demandId")?),
         "list_demand_revisions" => {

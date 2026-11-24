@@ -658,8 +658,13 @@ function appendMessages(active, items) {
 
 async function loadDemandResponses(demandId) {
   if (!demandId) return
-  const result = await invoke('list_demand_responses', { demandId })
-  cache.responsesByDemand.set(demandId, result.responses || [])
+  try {
+    const result = await invoke('list_demand_responses', { demandId })
+    cache.responsesByDemand.set(demandId, result.responses || [])
+  } catch (error) {
+    if (error?.code !== 'demand_not_open') throw error
+    cache.responsesByDemand.delete(demandId)
+  }
 }
 
 async function loadDemandRevisions(demandId) {

@@ -108,17 +108,23 @@
 
 ### 2.2 查询、完成与撤回本人需求
 - `GET /api/v1/demands`（可选 `?status=open`）→ `200 {"demands": [...]}`
+- `GET /api/v1/demands/:id` → `200 {"demand": {...}}`，含单次匹配授权状态。仅本人可查询。
 - `POST /api/v1/demands/:id/complete` → 完成自己的需求，释放活跃名额，返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/:id/cancel` → 仅本人可操作；将需求置为 `cancelled`，同时将关联 `pending` 匹配置为 `cancelled` 并通知各方；返回 `200 {"demand": {...}}`。
+
+提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。用户明确选中的长期字段与推断标签分别用 `profileFields` 和 `inferredTags`，对应的 `localVersion`、`cloudVersion` 取自 `GET /api/v1/profile` 的 `updatedAt`。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。画像变更返回 `409 match_profile_changed`，同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
 
 ### 2.3 修改需求与查询版本历史
 
 - `PATCH /api/v1/demands/:id` → 更新本人的进行中需求。只提交需要变更的字段，可用字段为 `title`、`summary`、`campus`、`location`、`timeWindow`、`partySize`、`preferences` 和 `expiresAt`，可附 `changeNote` 记录变更说明。时间区间用 `{start, end}`，人数范围用 `{min, max}`。成功返回 `200 {"demand": {...}, "matches": [...]}`。需求状态已不可修改时返回 `409 demand_not_editable`。
 - `GET /api/v1/demands/:id/revisions` → 查询指定需求的版本历史，返回 `200 {"revisions": [...]}`。
 
+已经签发单次匹配授权的需求修改时返回 `409 demand_not_editable`。请先撤回，再用新确认单提交。
+
 ### 2.4 需求回应与反馈
 
 - `GET /api/v1/demands/:id/responses` → `200 {"responses": [...]}`。托盘识别 `kind` 为 `link`、`richtext` 或 `html_card` 的回应，分别使用 `url`、`content` 或 `html` 展示内容。通知使用 `title`、`source` 和 `why`（缺省时读取 `summary`）。
+- 已撤回或已过期的开放需求返回 `409 demand_not_open`，托盘清除该需求缓存的回应。事件流可跳过失效记录，托盘使用回执 `lastSeq` 推进游标。
 - `POST /api/v1/responses/:id/feedback` → 提交对指定回应的反馈。托盘发送 `{"feedback": "useful"}` 标记有用、`{"feedback": "dismissed"}` 标记不合适，或发送 `{"feedback": ""}` 撤销标记。
 
 ---

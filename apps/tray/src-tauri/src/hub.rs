@@ -1,4 +1,4 @@
-use crate::api::{Api, ApiResult, Event, Failure};
+use crate::api::{Api, ApiResult, Event, EventBatch, Failure};
 use crate::session::{Member, SessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -635,7 +635,16 @@ impl Hub {
     }
 
     pub fn cancel_demand(&self, id: &str) -> ApiResult {
-        self.refresh_after(|api, token| api.cancel_demand(token, id))
+        self.authenticated(
+            |api, token| api.cancel_demand(token, id),
+            |runtime, _, _| {
+                runtime.mark_demand_read(id);
+                Some(Update {
+                    refresh_lists: true,
+                    ..Update::default()
+                })
+            },
+        )
     }
 
     pub fn complete_demand(&self, id: &str) -> ApiResult {
@@ -772,7 +781,10 @@ impl Hub {
             }
             let started = Instant::now();
             match self.api.events(&session.token, after) {
-                Ok(mut events) => {
+                Ok(EventBatch {
+                    mut events,
+                    last_seq,
+                }) => {
                     events.sort_by_key(|event| event.seq);
                     let mut runtime = self.runtime.lock().expect("hub state");
                     if runtime.generation != generation {
@@ -787,6 +799,7 @@ impl Hub {
                         new_notice |= runtime.receive(event, &session.member.id);
                         true
                     });
+                    runtime.last_seq = runtime.last_seq.max(last_seq);
                     if !events.is_empty() {
                         let refresh_lists = events.iter().any(|event| {
                             matches!(event.kind.as_str(), "room.updated" | "match.updated")

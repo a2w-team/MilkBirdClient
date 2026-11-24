@@ -65,6 +65,9 @@ impl Failure {
                 "最多可同时挂起 3 个需求，请先完成或撤回一个需求。"
             }
             (StatusCode::CONFLICT, "room_expired") => "这个临时群已到期。",
+            (StatusCode::CONFLICT, "demand_not_open") => "这条需求已结束，无法继续接收回应。",
+            (StatusCode::CONFLICT, "match_profile_changed") => "画像已更新，请重新确认本次共享字段。",
+            (StatusCode::CONFLICT, "idempotency_conflict") => "这次提交与原确认单不同，请重新确认后提交。",
             _ => message,
         };
         let mut failure = Failure::new(
@@ -121,8 +124,10 @@ pub struct Event {
 }
 
 #[derive(Deserialize)]
-struct EventBatch {
-    events: Vec<Event>,
+pub struct EventBatch {
+    pub events: Vec<Event>,
+    #[serde(rename = "lastSeq")]
+    pub last_seq: u64,
 }
 
 impl Api {
@@ -289,6 +294,10 @@ impl Api {
         )
     }
 
+    pub fn get_demand(&self, token: &str, id: &str) -> ApiResult {
+        self.get(&["demands", id], &[], token)
+    }
+
     pub fn cancel_demand(&self, token: &str, id: &str) -> ApiResult {
         self.write(Method::POST, &["demands", id, "cancel"], None, Some(token))
     }
@@ -328,13 +337,11 @@ impl Api {
         )
     }
 
-    pub fn events(&self, token: &str, after: u64) -> ApiResult<Vec<Event>> {
+    pub fn events(&self, token: &str, after: u64) -> ApiResult<EventBatch> {
         let url = self.url(&["events"])?;
         let request = self.long.get(url).query(&[("after", after), ("wait", 25)]);
         let result = Self::send(request, Some(token))?;
-        let batch: EventBatch =
-            serde_json::from_value(result).map_err(|_| Failure::invalid_response())?;
-        Ok(batch.events)
+        serde_json::from_value(result).map_err(|_| Failure::invalid_response())
     }
 
     pub fn list_rooms(&self, token: &str) -> ApiResult {
@@ -412,6 +419,13 @@ mod tests {
             "http://127.0.0.1:8080/api/v1/rooms/a%2Fb%3Fc/messages"
         );
         assert!(api.url(&["rooms", "..", "messages"]).is_err());
+    }
+
+    #[test]
+    fn event_batch_preserves_cursor_after_suppressed_deliveries() {
+        let batch: EventBatch = serde_json::from_str(r#"{"events":[],"lastSeq":42}"#).unwrap();
+        assert!(batch.events.is_empty());
+        assert_eq!(batch.last_seq, 42);
     }
 
     #[test]

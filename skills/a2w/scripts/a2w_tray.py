@@ -75,9 +75,16 @@ def parse_arguments():
         demand.add_argument("--preferences-json", dest="preferences", type=preferences)
         demand.add_argument("--expires-at", dest="expiresAt", type=required_text)
     submit.add_argument("--idempotency-key", dest="idempotencyKey", type=required_text)
+    submit.add_argument("--single-match", dest="singleMatch", action="store_true")
+    submit.add_argument("--profile-field", dest="profileFields", type=required_text, action="append")
+    submit.add_argument("--inferred-tag", dest="inferredTags", type=required_text, action="append")
+    submit.add_argument("--local-version", dest="localVersion", type=required_text)
+    submit.add_argument("--cloud-version", dest="cloudVersion", type=required_text)
     update.add_argument("--change-note", dest="changeNote", type=required_text)
 
     command("list-demands", "List your demands.").add_argument("--status", type=required_text)
+    command("get-demand", "Get a demand and its match authorization status.").add_argument(
+        "--id", dest="demandId", type=required_text, required=True)
     command("cancel-demand", "Cancel an open demand.").add_argument(
         "--id", dest="demandId", type=required_text, required=True)
     command("complete-demand", "Complete a demand and free an active slot.").add_argument(
@@ -130,8 +137,25 @@ def parse_arguments():
             if resolved_min > resolved_max:
                 raise UsageError("--party-min must be at most --party-max")
             payload["partySize"] = {"min": resolved_min, "max": resolved_max}
-    if action == "submit_demand" and "idempotencyKey" not in payload:
-        payload["idempotencyKey"] = str(uuid.uuid4())
+    if action == "submit_demand":
+        single_match = payload.pop("singleMatch", False)
+        scope = {
+            field: payload.pop(field)
+            for field in ("profileFields", "inferredTags", "localVersion", "cloudVersion")
+            if field in payload
+        }
+        if scope and not single_match:
+            raise UsageError("profile selections require --single-match")
+        if single_match:
+            if "expiresAt" not in payload or "idempotencyKey" not in payload:
+                raise UsageError("--single-match requires --expires-at and --idempotency-key")
+            if ("profileFields" in scope) != ("localVersion" in scope):
+                raise UsageError("--profile-field and --local-version must be provided together")
+            if ("inferredTags" in scope) != ("cloudVersion" in scope):
+                raise UsageError("--inferred-tag and --cloud-version must be provided together")
+            payload["matchAuthorization"] = {"purpose": "single_match", **scope}
+        elif "idempotencyKey" not in payload:
+            payload["idempotencyKey"] = str(uuid.uuid4())
     return action, payload
 
 
