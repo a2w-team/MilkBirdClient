@@ -1,0 +1,25 @@
+[package]
+name = "milkbird-pet"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Performance-first native desktop pet companion for MilkBird Club"
+
+[lib]
+name = "milkbird_pet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "milkbird-pet-preview"
+path = "src/bin/preview.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tiny-skia = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
