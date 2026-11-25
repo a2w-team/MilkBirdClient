@@ -520,6 +520,7 @@ fn main() {
                 },
             ));
             app.manage(Arc::clone(&hub));
+            apply_update(app.handle(), Update::default());
             bridge.start(Arc::clone(&hub))?;
             hub.start_events()?;
 
