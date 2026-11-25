@@ -690,6 +690,7 @@ function renderDetail() {
     kicker.append(node('strong', `${participants.length}人成团邀请`), node('span', formatReason(match.reason)))
     card.append(kicker)
     card.append(node('div', others[0]?.demandTitle || demand.title, 'card-title'))
+    if (match.why) card.append(node('div', match.why, 'why-box'))
 
     const chips = node('div', undefined, 'participants')
     const decMap = { accept: '✓', decline: '×', pending: '…' }
