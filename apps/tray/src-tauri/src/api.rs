@@ -26,6 +26,8 @@ pub struct Failure {
     pub message: String,
     #[serde(skip)]
     pub unauthorized: bool,
+    #[serde(skip)]
+    pub retryable: bool,
 }
 
 impl Failure {
@@ -34,6 +36,7 @@ impl Failure {
             code: code.into(),
             message: message.into(),
             unauthorized: false,
+            retryable: false,
         }
     }
 
@@ -65,6 +68,12 @@ impl Failure {
                 "最多可同时挂起 3 个需求，请先完成或撤回一个需求。"
             }
             (StatusCode::CONFLICT, "room_expired") => "这个临时群已到期。",
+            (StatusCode::CONFLICT, "demand_submission_withdrawn") => {
+                "这次提交已撤回，请重新确认后发起新需求。"
+            }
+            (StatusCode::CONFLICT, "idempotency_conflict") => {
+                "这次提交与原确认单不同，请重新确认后提交。"
+            }
             _ => message,
         };
         let mut failure = Failure::new(
@@ -76,6 +85,7 @@ impl Failure {
                 .unwrap_or(message),
         );
         failure.unauthorized = status == StatusCode::UNAUTHORIZED;
+        failure.retryable = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
         failure
     }
 
@@ -182,9 +192,11 @@ impl Api {
         } else {
             request
         };
-        let response = request
-            .send()
-            .map_err(|_| Failure::new("server_unavailable", "暂时无法连接俱乐部，请稍后重试。"))?;
+        let response = request.send().map_err(|_| {
+            let mut error = Failure::new("server_unavailable", "暂时无法连接俱乐部，请稍后重试。");
+            error.retryable = true;
+            error
+        })?;
         let status = response.status();
         let mut bytes = Vec::new();
         let read = response.take(MAX_RESPONSE + 1).read_to_end(&mut bytes);
@@ -270,6 +282,15 @@ impl Api {
 
     pub fn submit_demand(&self, token: &str, body: &Value) -> ApiResult {
         self.write(Method::POST, &["demands"], Some(body), Some(token))
+    }
+
+    pub fn withdraw_submission(&self, token: &str, key: &str) -> ApiResult {
+        self.write(
+            Method::POST,
+            &["demands", "withdraw-submission"],
+            Some(&json!({ "idempotencyKey": key })),
+            Some(token),
+        )
     }
 
     pub fn update_demand(&self, token: &str, id: &str, body: &Value) -> ApiResult {

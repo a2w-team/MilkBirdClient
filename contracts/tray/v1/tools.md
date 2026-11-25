@@ -33,7 +33,9 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | Action | Payload 关键字段 | 行为与返回 `data` |
 |---|---|---|
 | `status` | `{}` | 返回 `{loggedIn, member, apiOrigin, unreadCount, unreadByDemand, unreadByRoom}`；不需要登录 |
-| `submit_demand` | `{confirmed: true, idempotencyKey, category, title, summary?, campus, location?, timeWindow?, partySize?, preferences?, expiresAt?}` | 校验 `confirmed == true` 和已登录；转发 `POST /api/v1/demands`；更新托盘状态并返回 `{demand, matches}`；若立即命中匹配则触发托盘提醒 |
+| `submit_demand` | `{confirmed: true, idempotencyKey, category, title, summary?, campus, location?, timeWindow?, partySize?, preferences?, expiresAt?}` | 登录并确认后保存原提交。后台确认时返回 `{demand, matches}`。临时不可达时返回 `{submission}`，托盘重连后用原键重发 |
+| `list_submissions` | `{}` | 返回当前账号在本机的 `{memberId, submissions}`，离线可用 |
+| `withdraw_submission` | `{idempotencyKey}` | 停止本机补发并用原键撤回。后台返回回执时返回 `{status: "withdrawn", demand}`。离线时返回 `{submission}`，可在重连后继续撤回 |
 | `update_demand` | `{confirmed: true, demandId, title?, summary?, campus?, location?, timeWindow?, partySize?, preferences?, expiresAt?, changeNote?}` | 校验确认和登录；将变更字段转发至 `PATCH /api/v1/demands/:id`，返回 `{demand, matches}`。成功后刷新列表，有匹配时触发托盘提醒 |
 | `list_demands` | `{status?}` | 转发 `GET /api/v1/demands`，返回 `{demands}` |
 | `cancel_demand` | `{demandId}` | 转发 `POST /api/v1/demands/:id/cancel`，返回 `{demand}` |
@@ -54,6 +56,8 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 脚本新增 `complete-demand --id …`、`list-responses --demand-id …` 和 `vote-retention --room-id … --keep|--no-keep`。`notify` 和 `open-room` 接受可选的 `--demand-id`。
 
 使用 `update-demand --confirmed --id …` 修改现有需求，可用 `--change-note` 记录说明。`--start` 和 `--end` 成对传入并打包为 `timeWindow`。`--party-min` 和 `--party-max` 打包为 `partySize`，沿用 `submit-demand` 的缺省规则。使用 `list-revisions --demand-id …` 查询版本历史。
+
+`submission` 包含 `idempotencyKey`、`title`、`expiresAt`、`status` 和可选错误消息 `error`。状态为 `pending`、`withdrawing`、`expired`、`failed` 或 `withdrawal_failed`。离线队列随托盘重启保留，按俱乐部地址和账号隔离。过期确认单停止提交。`list-submissions` 查看状态，`withdraw-submission --idempotency-key …` 撤回仍未收到需求 ID 的提交。
 
 ## 4. 程序驱动 vs LLM 驱动配合规则
 

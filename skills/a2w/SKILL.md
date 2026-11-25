@@ -30,3 +30,9 @@ disable-model-invocation: true
 用户想调整已有进行中的需求时，先定位原需求，按同一[需求确认规则](references/demand-confirmation.md)整理改动并请用户确认，再运行 `update-demand --confirmed --id … --change-note …`，附上确认过的字段，在原需求上更新。用 `list-revisions --demand-id …` 查看变更历史。
 
 向用户只汇报结果与眼下可做的操作。隐藏本机通信、协议、调试输出和内部 ID。
+
+## 离线提交与撤回
+
+每次 `submit-demand` 后按回执汇报。回执含 `demand` 时，俱乐部已收到需求。只收到 `submission.status: pending` 时，告诉用户需求已在本机排队，托盘重连后自动提交。用 `list-submissions` 查看等待、失败或过期状态，用 `list-demands` 查看服务端确认的需求。过期后，经用户重新确认才能用新键提交。
+
+用户要求撤回，且手上只有排队回执时，用 `withdraw-submission --idempotency-key …`，沿用原提交的键并停止重提。返回 `withdrawing` 时说明本机已停止补发，服务端撤回尚待确认。返回 `withdrawn` 时按 `demand` 的实际状态汇报。若 `demand` 为 `null`，说明俱乐部已阻止这次提交创建需求。遇到 `withdrawal_failed` 时说明撤回尚未确认，并用原键重试撤回。

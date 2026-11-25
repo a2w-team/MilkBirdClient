@@ -171,7 +171,7 @@ fn read_notification_states(path: &Path) -> io::Result<NotificationStates> {
     }
 }
 
-fn write_private_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
+pub(crate) fn write_private_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
     let (temporary, mut file) = loop {
         let sequence = NEXT_FILE.fetch_add(1, Ordering::Relaxed);

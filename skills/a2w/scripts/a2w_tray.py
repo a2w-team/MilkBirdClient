@@ -78,6 +78,9 @@ def parse_arguments():
     update.add_argument("--change-note", dest="changeNote", type=required_text)
 
     command("list-demands", "List your demands.").add_argument("--status", type=required_text)
+    command("list-submissions", "List this device's unsynced demands.")
+    command("withdraw-submission", "Withdraw an unsynced demand.").add_argument(
+        "--idempotency-key", dest="idempotencyKey", type=required_text, required=True)
     command("cancel-demand", "Cancel an open demand.").add_argument(
         "--id", dest="demandId", type=required_text, required=True)
     command("complete-demand", "Complete a demand and free an active slot.").add_argument(

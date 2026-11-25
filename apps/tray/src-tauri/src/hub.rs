@@ -1,5 +1,6 @@
 use crate::api::{Api, ApiResult, Event, Failure};
-use crate::session::{Member, NotificationState, SessionStore};
+use crate::outbox::Outbox;
+use crate::session::{Member, NotificationState, Session, SessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -157,6 +158,15 @@ impl Runtime {
             return true;
         }
         false
+    }
+
+    fn clear_withdrawn_demand(&mut self, demand_id: &str) {
+        self.mark_demand_read(demand_id);
+        if self.last_notice.as_ref().is_some_and(|notice| {
+            notice.target.demand_id.as_deref() == Some(demand_id) && notice.target.room_id.is_none()
+        }) {
+            self.last_notice = None;
+        }
     }
 
     fn mark_room_ready_read(&mut self, demand_id: &str) {
@@ -429,6 +439,14 @@ impl Runtime {
                 }
                 return false;
             }
+            "demand.updated" => {
+                if data["demand"]["status"] == "cancelled"
+                    && let Some(id) = string_field(&data["demand"], "id").or(demand_id)
+                {
+                    self.clear_withdrawn_demand(&id);
+                }
+                return false;
+            }
             _ => return false,
         }
         true
@@ -507,6 +525,7 @@ pub struct Update {
 pub struct Hub {
     api: Api,
     session: SessionStore,
+    outbox: Mutex<Outbox>,
     runtime: Mutex<Runtime>,
     changed: Condvar,
     publish: Box<dyn Fn(Update) + Send + Sync>,
@@ -516,6 +535,7 @@ impl Hub {
     pub fn new(
         api: Api,
         session: SessionStore,
+        outbox: Outbox,
         publish: impl Fn(Update) + Send + Sync + 'static,
     ) -> Self {
         let mut runtime = Runtime::default();
@@ -527,6 +547,7 @@ impl Hub {
         Self {
             api,
             session,
+            outbox: Mutex::new(outbox),
             runtime: Mutex::new(runtime),
             changed: Condvar::new(),
             publish: Box::new(publish),
@@ -656,12 +677,20 @@ impl Hub {
         call: impl FnOnce(&Api, &str) -> ApiResult<T>,
         effect: impl FnOnce(&mut Runtime, &T, &Member) -> Option<Update>,
     ) -> ApiResult<T> {
+        self.authenticated_session(|api, session| call(api, &session.token), effect)
+    }
+
+    fn authenticated_session<T>(
+        &self,
+        call: impl FnOnce(&Api, &Session) -> ApiResult<T>,
+        effect: impl FnOnce(&mut Runtime, &T, &Member) -> Option<Update>,
+    ) -> ApiResult<T> {
         let (generation, session) = {
             let runtime = self.runtime.lock().expect("hub state");
             let session = self.session.get().ok_or_else(Failure::login_required)?;
             (runtime.generation, session)
         };
-        let result = call(&self.api, &session.token);
+        let result = call(&self.api, &session);
         let mut runtime = self.runtime.lock().expect("hub state");
         if runtime.generation != generation {
             return Err(Failure::new("session_changed", "登录状态已变化。"));
@@ -687,18 +716,53 @@ impl Hub {
             .as_object_mut()
             .expect("confirmed field implies object")
             .remove("confirmed");
-        self.authenticated(
-            |api, token| {
-                let result = api.submit_demand(token, &payload)?;
-                let demand = result.get("demand").ok_or_else(Failure::invalid_response)?;
-                let matches = result["matches"].as_array().cloned().unwrap_or_default();
-                Ok(json!({ "demand": demand, "matches": matches }))
-            },
-            |runtime, value, member| {
-                let demand_id = string_field(&value["demand"], "id");
-                Some(Self::demand_saved(runtime, value, demand_id, member))
-            },
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(
+            |api, session| outbox.submit(api, session, payload),
+            |runtime, value, member| Some(Self::submission_update(runtime, value, member)),
         )
+    }
+
+    pub fn list_submissions(&self) -> ApiResult {
+        let outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(|api, session| Ok(outbox.list(api, session)), |_, _, _| None)
+    }
+
+    pub fn withdraw_submission(&self, key: &str) -> ApiResult {
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(
+            |api, session| outbox.withdraw(api, session, key),
+            |runtime, value, member| Some(Self::submission_update(runtime, value, member)),
+        )
+    }
+
+    fn flush_submissions(&self) {
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        let _ = self.authenticated_session(
+            |api, session| outbox.flush(api, session),
+            |runtime, (changed, results), member| {
+                if !changed {
+                    return None;
+                }
+                let mut update = Update::default();
+                for value in results {
+                    let step = Self::submission_update(runtime, value, member);
+                    update.new_notice |= step.new_notice;
+                    update.refresh_lists |= step.refresh_lists;
+                }
+                Some(update)
+            },
+        );
+    }
+
+    fn submission_update(runtime: &mut Runtime, value: &Value, member: &Member) -> Update {
+        let Some(id) = string_field(&value["demand"], "id") else {
+            return Update::default();
+        };
+        if value["demand"]["status"] == "cancelled" {
+            runtime.clear_withdrawn_demand(&id);
+        }
+        Self::demand_saved(runtime, value, Some(id), member)
     }
 
     pub fn update_demand(&self, id: &str, mut payload: Value) -> ApiResult {
@@ -910,6 +974,7 @@ impl Hub {
                     continue;
                 }
             }
+            self.flush_submissions();
             let started = Instant::now();
             match self.api.events(&session.token, after) {
                 Ok(mut events) => {
@@ -922,7 +987,7 @@ impl Hub {
                     self.persist_notification_state(&mut runtime);
                     if !events.is_empty() {
                         let refresh_lists = events.iter().any(|event| {
-                            matches!(event.kind.as_str(), "room.updated" | "match.updated")
+                            matches!(event.kind.as_str(), "room.updated" | "match.updated" | "demand.updated")
                         });
                         (self.publish)(Update {
                             events,
@@ -1044,6 +1109,26 @@ mod tests {
         assert_eq!(notice.body, "校园活动 · 时间合适");
         assert_eq!(notice.target.demand_id.as_deref(), Some("d1"));
         assert!(notice.target.room_id.is_none());
+    }
+
+    #[test]
+    fn withdrawal_clears_only_the_cancelled_demand_response_unread() {
+        let mut runtime = Runtime::default();
+        response(&mut runtime, "other");
+        message(&mut runtime, "room", Some("cancelled"));
+        response(&mut runtime, "cancelled");
+        assert!(!receive(
+            &mut runtime,
+            "demand.updated",
+            json!({
+                "demandId": "cancelled",
+                "demand": { "id": "cancelled", "status": "cancelled" }
+            }),
+        ));
+        assert_eq!(runtime.unread_by_demand["cancelled"].response_count, 0);
+        assert_eq!(runtime.unread_by_demand["cancelled"].room_message_count, 1);
+        assert_eq!(runtime.unread_by_demand["other"].response_count, 1);
+        assert!(runtime.last_notice.is_none());
     }
 
     #[test]
@@ -1202,7 +1287,7 @@ mod tests {
                 },
             })
             .unwrap();
-        let hub = Hub::new(Api::new(origin).unwrap(), session, |_| {});
+        let hub = Hub::new(Api::new(origin).unwrap(), session, Outbox::open(dir.path()).unwrap(), |_| {});
 
         // There is no unread to clear, but the room association changes.
         hub.mark_room_read("r1", Some("d1"));
@@ -1231,7 +1316,7 @@ mod tests {
         drop(hub);
 
         let session = SessionStore::open(dir.path()).unwrap();
-        let hub = Hub::new(Api::new(origin).unwrap(), session, |_| {});
+        let hub = Hub::new(Api::new(origin).unwrap(), session, Outbox::open(dir.path()).unwrap(), |_| {});
         {
             let mut runtime = hub.runtime.lock().unwrap();
             assert_eq!(runtime.last_seq, 2);

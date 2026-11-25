@@ -242,6 +242,39 @@ async function openChatRoom(roomId, demandId = null) {
   await loadMessages()
 }
 
+function renderSubmissions(submissions) {
+  const statusLabels = { pending: '待提交', withdrawing: '待撤回', failed: '提交失败',
+    withdrawal_failed: '撤回失败', expired: '已过期' }
+  const rows = submissions.map(item => {
+    const row = node('div', undefined, 'spec-row')
+    const text = node('div', undefined, 'spec-v')
+    text.append(node('strong', item.title || '需求'), node('div', statusLabels[item.status], 'muted'))
+    if (item.error) text.append(node('div', item.error, 'muted'))
+    row.append(text)
+    if (item.status !== 'withdrawing') {
+      const label = item.status === 'withdrawal_failed' ? '重试撤回' : '撤回'
+      row.append(makeButton(label, async () => {
+        await invoke('withdraw_submission', { idempotencyKey: item.idempotencyKey })
+        await sync()
+      }, 'btn-quiet danger-text'))
+    }
+    return row
+  })
+  $('outbox-items').replaceChildren(...rows)
+  $('outbox-wrap').hidden = rows.length === 0
+}
+
+async function refreshSubmissions(revision, memberId) {
+  try {
+    const queue = await invoke('list_submissions')
+    if (revision === syncRevision && queue.memberId === memberId) {
+      renderSubmissions(queue.submissions)
+    }
+  } catch (error) {
+    if (revision === syncRevision && !['not_logged_in', 'session_changed'].includes(error?.code)) report(error)
+  }
+}
+
 function renderDemandsHome() {
   $('slot-count').textContent = `${cache.activeCount}/${cache.maxActive}`
   const openBtn = $('open-new-sheet')
@@ -742,6 +775,7 @@ async function sync(update, force = false) {
   if (accountChanged) {
     cache = { demands: [], activeCount: 0, maxActive: 3, matches: [], rooms: [], responsesByDemand: new Map(), revisionsByDemand: new Map() }
     revisionRequests.clear()
+    renderSubmissions([])
     chat = null
     pendingRoomSends = new Set()
     selectedDemandId = null
@@ -760,6 +794,8 @@ async function sync(update, force = false) {
     const targetView = ['demands', 'detail', 'room'].includes(next.activeView) ? next.activeView : 'demands'
     setView(targetView, next.demandId || null, next.roomId || null)
   }
+
+  refreshSubmissions(revision, next.member.id)
 
   const onlyChatMessages = !refresh && !accountChanged && !navigated && events.length > 0 && events.every(e => e.type === 'room.message')
   if (onlyChatMessages) {

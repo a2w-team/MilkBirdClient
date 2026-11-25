@@ -1,10 +1,12 @@
 mod api;
 mod bridge;
 mod hub;
+mod outbox;
 mod session;
 
 use api::{Api, ApiResult, Failure};
 use hub::{Bootstrap, Hub, Update, View};
+use outbox::Outbox;
 use session::{Member, SessionStore};
 use std::sync::Arc;
 #[cfg(not(target_os = "macos"))]
@@ -125,6 +127,16 @@ async fn complete_demand(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiRe
 #[tauri::command]
 async fn cancel_demand(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
     blocking(state, move |hub| hub.cancel_demand(&demand_id)).await
+}
+
+#[tauri::command]
+async fn list_submissions(state: State<'_, Arc<Hub>>) -> ApiResult {
+    blocking(state, Hub::list_submissions).await
+}
+
+#[tauri::command]
+async fn withdraw_submission(state: State<'_, Arc<Hub>>, idempotency_key: String) -> ApiResult {
+    blocking(state, move |hub| hub.withdraw_submission(&idempotency_key)).await
 }
 
 #[tauri::command]
@@ -447,6 +459,8 @@ fn main() {
             list_demands,
             complete_demand,
             cancel_demand,
+            list_submissions,
+            withdraw_submission,
             list_demand_revisions,
             list_demand_responses,
             feedback_response,
@@ -512,6 +526,7 @@ fn main() {
             let hub = Arc::new(Hub::new(
                 Api::from_env()?,
                 SessionStore::open(&dir)?,
+                Outbox::open(&dir)?,
                 move |update| {
                     let handle = handle.clone();
                     let _ = handle
