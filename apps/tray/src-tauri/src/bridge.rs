@@ -1,4 +1,5 @@
 use crate::api::{ApiResult, Failure};
+use crate::campus_assistant::CampusAssistant;
 use crate::hub::{Hub, Target};
 use crate::session::ensure_private_dir;
 use serde::Deserialize;
@@ -55,9 +56,14 @@ fn required_string<'a>(payload: &'a Value, field: &str) -> ApiResult<&'a str> {
     optional_string(payload, field)?.ok_or_else(Failure::invalid_request)
 }
 
-fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
+fn dispatch(hub: &Hub, campus: &CampusAssistant, action: &str, payload: Value) -> ApiResult {
     match action {
         "status" => Ok(hub.status()),
+        "campus_assistant" => {
+            let action = required_string(&payload, "action")?;
+            let input = payload.get("payload").ok_or_else(Failure::invalid_request)?;
+            campus.call(action, input)
+        }
         "submit_demand" => hub.submit_demand(payload),
         "update_demand" => {
             let demand_id = required_string(&payload, "demandId")?.to_owned();
@@ -124,13 +130,13 @@ fn tool_error(error: Failure) -> Value {
     json!({ "ok": false, "code": error.code, "message": error.message })
 }
 
-fn serve(stream: &mut UnixStream, hub: &Hub) -> io::Result<()> {
+fn serve(stream: &mut UnixStream, hub: &Hub, campus: &CampusAssistant) -> io::Result<()> {
     let mut line = Vec::new();
     let mut reader = BufReader::new((&*stream).take(MAX_FRAME + 1));
     reader.read_until(b'\n', &mut line)?;
 
     let response = parse(&line).and_then(|frame| {
-        let data = dispatch(hub, &frame.action, Value::Object(frame.payload))?;
+        let data = dispatch(hub, campus, &frame.action, Value::Object(frame.payload))?;
         Ok(json!({ "ok": true, "action": frame.action, "data": data }))
     });
     let mut encoded = serde_json::to_vec(&response.unwrap_or_else(tool_error))?;
@@ -184,7 +190,7 @@ impl Bridge {
         Ok(bridge)
     }
 
-    pub fn start(self, hub: Arc<Hub>) -> io::Result<()> {
+    pub fn start(self, hub: Arc<Hub>, campus: Arc<CampusAssistant>) -> io::Result<()> {
         std::thread::Builder::new()
             .name("tray-bridge".into())
             .spawn(move || {
@@ -197,7 +203,7 @@ impl Bridge {
                             .set_write_timeout(Some(Duration::from_secs(2)))
                             .is_ok()
                     {
-                        let _ = serve(&mut stream, &hub);
+                        let _ = serve(&mut stream, &hub, &campus);
                     }
                 }
                 // Keep the instance lock and socket cleanup for the lifetime of the listener.
@@ -224,7 +230,7 @@ mod tests {
         let (mut client, mut server) = UnixStream::pair().unwrap();
         client.write_all(request).unwrap();
         client.shutdown(Shutdown::Write).unwrap();
-        serve(&mut server, hub).unwrap();
+        serve(&mut server, hub, &CampusAssistant::new(false)).unwrap();
         drop(server);
         let mut response = Vec::new();
         client.read_to_end(&mut response).unwrap();
@@ -307,6 +313,25 @@ mod tests {
         assert_eq!(update(json!({"confirmed": true}))["code"], "invalid_request");
         assert_eq!(
             update(json!({"demandId": "d1", "confirmed": true}))["code"],
+            "not_logged_in"
+        );
+    }
+
+    #[test]
+    fn campus_status_does_not_depend_on_a_club_session() {
+        let dir = TestDir::new();
+        let hub = logged_out_hub(&dir);
+        let frame = json!({
+            "version": 1,
+            "action": "campus_assistant",
+            "payload": {"action": "status", "payload": {}}
+        });
+        let response = reply(&hub, format!("{frame}\n").as_bytes());
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["data"]["mode"], "official");
+        assert_eq!(response["data"]["services"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            reply(&hub, b"{\"version\":1,\"action\":\"get_profile\",\"payload\":{}}\n")["code"],
             "not_logged_in"
         );
     }

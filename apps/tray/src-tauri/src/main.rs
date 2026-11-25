@@ -1,10 +1,13 @@
 mod api;
 mod bridge;
+mod campus_assistant;
 mod hub;
 mod session;
 
 use api::{Api, ApiResult, Failure};
+use campus_assistant::CampusAssistant;
 use hub::{Bootstrap, Hub, Update, View};
+use serde_json::Value;
 use session::{Member, SessionStore};
 use std::sync::Arc;
 #[cfg(not(target_os = "macos"))]
@@ -19,6 +22,7 @@ use tauri::{
 };
 
 const TRAY_ID: &str = "a2w";
+const CAMPUS_WINDOW: &str = "campus-assistant";
 const DEFAULT_EMAIL_DOMAINS: &str = "hkust-gz.edu.cn,connect.hkust-gz.edu.cn";
 
 struct TraySettings {
@@ -84,6 +88,50 @@ fn get_bootstrap(state: State<'_, Arc<Hub>>) -> Bootstrap {
 #[tauri::command]
 fn get_login_domains(settings: State<'_, TraySettings>) -> Vec<String> {
     settings.email_domains.clone()
+}
+
+fn authorize_campus_window(window: &WebviewWindow) -> ApiResult<()> {
+    if window.label() != CAMPUS_WINDOW {
+        return Err(Failure::new(
+            "campus_window_required",
+            "请在校园私人助理窗口执行此操作。",
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn campus_assistant(
+    window: WebviewWindow,
+    assistant: State<'_, Arc<CampusAssistant>>,
+    action: String,
+    payload: Value,
+) -> ApiResult {
+    authorize_campus_window(&window)?;
+    assistant.call(&action, &payload)
+}
+
+#[tauri::command]
+async fn open_campus_service(window: WebviewWindow, service: String) -> ApiResult<()> {
+    authorize_campus_window(&window)?;
+    let url = CampusAssistant::official_url(&service)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        let opener = "/usr/bin/open";
+        #[cfg(not(target_os = "macos"))]
+        let opener = "xdg-open";
+        if std::process::Command::new(opener)
+            .arg(url)
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            Ok(())
+        } else {
+            Err(Failure::new("campus_open_failed", "未能打开浏览器，请稍后重试。"))
+        }
+    })
+    .await
+    .map_err(|_| Failure::new("campus_open_failed", "未能打开浏览器，请稍后重试。"))?
 }
 
 #[tauri::command]
@@ -441,6 +489,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
             get_login_domains,
+            campus_assistant,
+            open_campus_service,
             request_email_code,
             verify_email_code,
             logout,
@@ -470,14 +520,16 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
             let settings = TraySettings::from_env();
             let show = MenuItem::with_id(app, "show", "打开奶鸟俱乐部", true, None::<&str>)?;
+            let campus = MenuItem::with_id(app, CAMPUS_WINDOW, "校园私人助理", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出奶鸟俱乐部", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &campus, &quit])?;
             let tray = TrayIconBuilder::with_id(TRAY_ID)
                 .title(&settings.title)
                 .tooltip("奶鸟俱乐部")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main(app),
+                    CAMPUS_WINDOW => show_window(app, CAMPUS_WINDOW, true),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -519,18 +571,26 @@ fn main() {
                         .run_on_main_thread(move || apply_update(&handle, update));
                 },
             ));
+            let demo = std::env::var_os("MILKBIRD_CAMPUS_DEMO").is_some_and(|value| value == "1");
+            let assistant = Arc::new(CampusAssistant::new(demo));
             app.manage(Arc::clone(&hub));
+            app.manage(Arc::clone(&assistant));
             apply_update(app.handle(), Update::default());
-            bridge.start(Arc::clone(&hub))?;
+            bridge.start(Arc::clone(&hub), assistant)?;
             hub.start_events()?;
 
             if !std::env::args().any(|arg| arg == "--background") {
                 show_main(app.handle());
+                if demo {
+                    show_window(app.handle(), CAMPUS_WINDOW, true);
+                }
             }
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            if window.label() != CAMPUS_WINDOW
+                && let WindowEvent::CloseRequested { api, .. } = event
+            {
                 api.prevent_close();
                 let _ = window.hide();
             }

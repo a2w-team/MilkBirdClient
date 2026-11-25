@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>校园私人助理</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <main class="campus-main">
+      <nav class="campus-services" aria-label="校园服务">
+        <button class="btn" type="button" data-service="mail" aria-pressed="true">邮件</button>
+        <button class="btn" type="button" data-service="timetable" aria-pressed="false">课表</button>
+        <button class="btn" type="button" data-service="swimming" aria-pressed="false">游泳馆</button>
+        <button class="btn" type="button" data-service="meeting-room" aria-pressed="false">会议室</button>
+      </nav>
+
+      <section class="card campus-service" aria-labelledby="campus-service-name">
+        <div class="campus-heading">
+          <h2 id="campus-service-name">邮件</h2>
+          <span id="campus-connection" class="pill" role="status"></span>
+        </div>
+        <p id="campus-source" class="muted"></p>
+        <p id="campus-handoff" class="campus-handoff"></p>
+        <div class="campus-actions">
+          <button id="campus-official" class="btn compact" type="button">打开官方入口 ↗</button>
+          <button id="campus-connect" class="btn compact" type="button" hidden>连接模拟账号</button>
+          <button id="campus-disconnect" class="btn-quiet" type="button" hidden>解除连接</button>
+        </div>
+      </section>
+
+      <p id="campus-feedback" class="campus-feedback" role="status" hidden></p>
+      <div id="campus-receipt" class="card campus-receipt" role="status" hidden></div>
+
+      <section id="campus-query" class="campus-query" aria-label="查询校园服务" hidden>
+        <form id="campus-query-form" class="campus-query-form">
+          <label id="campus-date-field" class="campus-field" hidden>
+            <span>日期（广州时间）</span>
+            <input id="campus-date" type="date">
+          </label>
+          <label id="campus-unread-field" class="campus-check" hidden>
+            <input id="campus-unread" type="checkbox">
+            <span>仅未读</span>
+          </label>
+          <button id="campus-query-button" class="btn primary compact" type="submit">查询</button>
+          <button id="campus-bookings" class="btn compact" type="button" hidden>我的预约</button>
+        </form>
+        <p id="campus-observed" class="muted" aria-live="polite" hidden></p>
+        <div id="campus-results" class="campus-results" aria-live="polite" hidden></div>
+      </section>
+    </main>
+
+    <dialog id="campus-confirmation" class="campus-dialog" aria-labelledby="campus-confirmation-title">
+      <form id="campus-confirmation-form" method="dialog">
+        <h2 id="campus-confirmation-title"></h2>
+        <div id="campus-confirmation-detail" class="campus-confirmation-detail"></div>
+        <div class="campus-actions campus-dialog-actions">
+          <button class="btn" type="submit" value="back" autofocus>返回</button>
+          <button id="campus-confirm-button" class="btn primary" type="submit" value="confirm">确认</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
