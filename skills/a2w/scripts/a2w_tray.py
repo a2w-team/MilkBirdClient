@@ -33,13 +33,20 @@ def positive_int(value):
     return number
 
 
-def preferences(value):
+def versioned_field(value):
+    field, separator, version = value.rpartition("=")
+    if not separator:
+        raise argparse.ArgumentTypeError("expected FIELD=VERSION")
+    return required_text(field), positive_int(version)
+
+
+def json_object(value):
     try:
         result = json.loads(value, parse_constant=invalid_constant)
     except ValueError as error:
-        raise argparse.ArgumentTypeError("preferences must be a JSON object") from error
+        raise argparse.ArgumentTypeError("value must be a JSON object") from error
     if not isinstance(result, dict):
-        raise argparse.ArgumentTypeError("preferences must be a JSON object")
+        raise argparse.ArgumentTypeError("value must be a JSON object")
     return result
 
 
@@ -72,15 +79,22 @@ def parse_arguments():
             demand.add_argument(f"--{field}", type=required_text)
         demand.add_argument("--party-min", dest="partyMin", type=positive_int)
         demand.add_argument("--party-max", dest="partyMax", type=positive_int)
-        demand.add_argument("--preferences-json", dest="preferences", type=preferences)
+        demand.add_argument("--preferences-json", dest="preferences", type=json_object)
         demand.add_argument("--expires-at", dest="expiresAt", type=required_text)
     submit.add_argument("--idempotency-key", dest="idempotencyKey", type=required_text)
+    submit.add_argument("--single-match", dest="singleMatch", action="store_true")
+    submit.add_argument("--profile-field", dest="profileFields", type=versioned_field, action="append",
+                        metavar="FIELD=VERSION")
+    submit.add_argument("--inferred-tag", dest="inferredTags", type=required_text, action="append")
+    submit.add_argument("--cloud-version", dest="cloudVersion", type=required_text)
     update.add_argument("--change-note", dest="changeNote", type=required_text)
 
     command("list-demands", "List your demands.").add_argument("--status", type=required_text)
     command("list-submissions", "List this device's unsynced demands.")
     command("withdraw-submission", "Withdraw an unsynced demand.").add_argument(
         "--idempotency-key", dest="idempotencyKey", type=required_text, required=True)
+    command("get-demand", "Get a demand and its match authorization status.").add_argument(
+        "--id", dest="demandId", type=required_text, required=True)
     command("cancel-demand", "Cancel an open demand.").add_argument(
         "--id", dest="demandId", type=required_text, required=True)
     command("complete-demand", "Complete a demand and free an active slot.").add_argument(
@@ -113,8 +127,25 @@ def parse_arguments():
     profile = command("sync-profile", "Sync approved profile details.", "sync_local_profile")
     profile.add_argument("--campus", type=required_text)
     profile.add_argument("--bio", type=required_text)
-    profile.add_argument("--preferences-json", dest="preferences", type=preferences)
+    profile.add_argument("--preferences-json", dest="preferences", type=json_object)
+    profile_fields = command("sync-profile-fields", "Save confirmed profile fields with their versions.", "edit_profile_fields")
+    profile_fields.add_argument("--confirmed", action="store_true", required=True)
+    profile_fields.add_argument("--mutation-id", dest="mutationId", required=True, type=required_text)
+    profile_fields.add_argument("--changes-json", dest="changes", required=True, type=json_object)
     command("get-profile", "Read your profile.")
+    modeling = command("set-modeling-consent", "Set your confirmed long-term modeling consent.")
+    modeling.add_argument("--confirmed", action="store_true", required=True)
+    modeling.add_argument("--source", choices=("demands", "interactions"), required=True)
+    modeling.add_argument("--base-revision", dest="baseRevision", type=int, required=True)
+    choice = modeling.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--enable", dest="enabled", action="store_true")
+    choice.add_argument("--disable", dest="enabled", action="store_false")
+    command("profile-sync-status", "Check cached profile, draft and confirmed edits on this device.")
+    command("save-profile-draft", "Keep unconfirmed edits on this device.").add_argument(
+        "--changes-json", dest="changes", required=True, type=json_object)
+    command("discard-profile-draft", "Discard the local profile draft.")
+    command("discard-failed-profile-edit", "Remove a failed edit from the local queue.").add_argument(
+        "--mutation-id", dest="mutationId", required=True, type=required_text)
 
     payload = vars(parser.parse_args())
     action = payload.pop("action")
@@ -133,8 +164,28 @@ def parse_arguments():
             if resolved_min > resolved_max:
                 raise UsageError("--party-min must be at most --party-max")
             payload["partySize"] = {"min": resolved_min, "max": resolved_max}
-    if action == "submit_demand" and "idempotencyKey" not in payload:
-        payload["idempotencyKey"] = str(uuid.uuid4())
+    if action == "submit_demand":
+        single_match = payload.pop("singleMatch", False)
+        scope = {
+            field: payload.pop(field)
+            for field in ("profileFields", "inferredTags", "cloudVersion")
+            if field in payload
+        }
+        if scope and not single_match:
+            raise UsageError("profile selections require --single-match")
+        if single_match:
+            if "expiresAt" not in payload or "idempotencyKey" not in payload:
+                raise UsageError("--single-match requires --expires-at and --idempotency-key")
+            if ("inferredTags" in scope) != ("cloudVersion" in scope):
+                raise UsageError("--inferred-tag and --cloud-version must be provided together")
+            if "profileFields" in scope:
+                selected = scope["profileFields"]
+                scope["profileFields"] = dict(selected)
+                if len(scope["profileFields"]) != len(selected):
+                    raise UsageError("each --profile-field must name a different field")
+            payload["matchAuthorization"] = {"purpose": "single_match", **scope}
+        elif "idempotencyKey" not in payload:
+            payload["idempotencyKey"] = str(uuid.uuid4())
     return action, payload
 
 

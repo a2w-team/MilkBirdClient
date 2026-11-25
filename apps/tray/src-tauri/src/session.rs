@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufReader};
@@ -75,26 +75,13 @@ impl SessionStore {
     pub fn open(dir: &Path) -> io::Result<Self> {
         ensure_private_dir(dir)?;
         let path = dir.join("session.json");
-        let session = match fs::symlink_metadata(&path) {
-            Ok(meta) => {
-                if !meta.is_file() || meta.permissions().mode() & 0o777 != 0o600 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "session.json must be a regular file with mode 0600",
-                    ));
-                }
-                let session: Session = serde_json::from_reader(File::open(&path)?)?;
-                if !session.is_valid() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "invalid session",
-                    ));
-                }
-                Some(session)
-            }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-            Err(err) => return Err(err),
-        };
+        let session = read_private_json::<Session>(&path)?;
+        if session.as_ref().is_some_and(|session| !session.is_valid()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid session",
+            ));
+        }
         Ok(Self {
             path,
             session: Mutex::new(session),
@@ -199,6 +186,20 @@ pub(crate) fn write_private_json(path: &Path, value: &impl Serialize) -> io::Res
         let _ = fs::remove_file(temporary);
     }
     result
+}
+
+pub fn read_private_json<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && meta.permissions().mode() & 0o777 == 0o600 => {
+            Ok(Some(serde_json::from_reader(File::open(path)?)?))
+        }
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "tray data must be a regular file with mode 0600",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

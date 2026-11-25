@@ -42,12 +42,24 @@
     "acceptedMatchCount": 2,
     "roomMessageCount": 14,
     "recentCategories": ["dining", "sports"],
-    "summary": "近期在东校区活跃，常发起 dining 需求，参与临时群聊互动 14 条。",
+    "modelingCategories": [],
+    "inferences": [],
+    "inferenceVersion": "<version>",
+    "summary": "已提交 3 条需求，同意 2 次匹配，发送 14 条群消息。",
     "updatedAt": "2026-11-23T12:05:00Z"
-  }
+  },
+  "modeling": {
+    "demands": {"enabled": false, "revision": 0},
+    "interactions": {"enabled": false, "revision": 0}
+  },
+  "inferenceControls": {}
 }
 ```
-> 平台在成员提交需求、响应匹配、在临时群发消息时自动增量更新 `cloudProfile`（首版规则归纳，后续可替换为 LLM 摘要）。
+活动计数和 `recentCategories` 是本人活动记录。`modelingCategories` 列出当前可用的推断标签。`inferences` 包含逐项标签、证据版本、规则版本、置信分、生成时间、有效期，以及属于当前成员的来源引用。`PATCH /api/v1/profile/modeling` 接受 `{source, enabled, baseRevision}`。来源为 `demands` 或 `interactions`，均默认关闭。版本取 `modeling[来源].revision`。成功回复 `{consent, profile}`，过期设置返回 `409 modeling_consent_changed`。关闭清除该来源的已登记输入，再次开启只登记新活动。
+
+关闭来源会清除关联快照的推断和索引。依赖该来源且仍在匹配的需求被撤回，回执的 `revokedDemandIds` 列出本次受影响的需求。同账号其他设备接收 `profile.modeling.revoked` 和受影响需求的 `demand.updated`。重新开启来源后，原幂等键仍返回原授权及撤回状态。
+
+`PATCH /api/v1/profile/inferences` 接受 `{tag, action, baseRevision}`。`correct` 清除某项推断并从新证据重新计算，`disable` 持续停用，`enable` 恢复后从新记录累计。控制版本取 `inferenceControls[标签].revision`，首次用 `0`。成功返回 `{control, profile, revokedDemandIds?}`。其他设备从 `profile.inference.changed` 更新本机状态。
 
 ---
 
@@ -107,20 +119,27 @@
 ```
 
 ### 2.2 查询、完成与撤回本人需求
-- `GET /api/v1/demands`（可选 `?status=open`）→ `200 {"demands": [...]}`
+- `GET /api/v1/demands`（可选 `?status=open`）→ `200 {"demands": [...]}`。只列本人需求，已签发授权的需求包含 `matchAuthorization` 当前状态。
+- `GET /api/v1/demands/:id` → `200 {"demand": {...}}`，含单次匹配授权状态。仅本人可查询。
 - `POST /api/v1/demands/:id/complete` → 完成自己的需求，释放活跃名额，返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/:id/cancel` → 仅本人可操作；将需求置为 `cancelled`，同时将关联 `pending` 匹配置为 `cancelled` 并通知各方；返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/withdraw-submission` 接受原提交的 `{idempotencyKey}`。已创建需求时按同样规则撤回并返回 `{demand}`。需求尚未创建时返回 `{demand: null}` 并记录撤回。当前账号随后使用该键的新建提交返回 `409 demand_submission_withdrawn`。
+
+提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。`profileFields` 将用户明确选中的长期字段映射到 `localProfile.fieldVersions[字段名].version`，例如 `{"preferences.food":2}`。用户从 `cloudProfile.inferences` 明确选中的标签用 `inferredTags`，并带上 `cloudProfile.inferenceVersion` 作为 `cloudVersion`。从 `GET /api/v1/profile` 读取。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。所选字段被改动或删除、标签失效或证据版本变化时返回 `409 match_profile_changed`。所选推断早于需求截止时返回 `409 inference_expires_before_demand`。同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
 
 ### 2.3 修改需求与查询版本历史
 
 - `PATCH /api/v1/demands/:id` → 更新本人的进行中需求。只提交需要变更的字段，可用字段为 `title`、`summary`、`campus`、`location`、`timeWindow`、`partySize`、`preferences` 和 `expiresAt`，可附 `changeNote` 记录变更说明。时间区间用 `{start, end}`，人数范围用 `{min, max}`。成功返回 `200 {"demand": {...}, "matches": [...]}`。需求状态已不可修改时返回 `409 demand_not_editable`。
 - `GET /api/v1/demands/:id/revisions` → 查询指定需求的版本历史，返回 `200 {"revisions": [...]}`。
 
+已经签发单次匹配授权的需求修改时返回 `409 demand_not_editable`。请先撤回，再用新确认单提交。
+
 ### 2.4 需求回应与反馈
 
 - `GET /api/v1/demands/:id/responses` → `200 {"responses": [...]}`。托盘识别 `kind` 为 `link`、`richtext` 或 `html_card` 的回应，分别使用 `url`、`content` 或 `html` 展示内容。通知使用 `title`、`source` 和 `why`（缺省时读取 `summary`）。
+- 已撤回或已过期的开放需求返回 `409 demand_not_open`，托盘清除该需求缓存的回应。事件流可跳过失效记录，托盘使用回执 `lastSeq` 推进游标。
 - `POST /api/v1/responses/:id/feedback` → 提交对指定回应的反馈。托盘发送 `{"feedback": "useful"}` 标记有用、`{"feedback": "dismissed"}` 标记不合适，或发送 `{"feedback": ""}` 撤销标记。
+- `expectedUpdatedAt` 取该回应的 `updatedAt`。当前反馈被其他设备改动后，用旧版本更改反馈返回 `409 response_feedback_changed`。互动来源开启时，只登记带版本的新反馈选择。
 
 ---
 
@@ -197,7 +216,7 @@
   - `room.ready`：payload 包含 `room`，需求归属取 `demandId` 或 `room.demandId`，可附带 `match`
   - `room.message`：payload 包含 `roomId` 与 `message`，可带 `demandId`；托盘也可根据既有群聊归属关联需求
   - `room.updated`：群聊状态变化，托盘刷新列表
-  - `demand.updated`：payload 包含 `demand`
+  - `demand.updated`：payload 包含 `demandId` 和 `demand`。收到已撤回的状态时刷新需求，并清除该需求的回应未读。
 
 响应 `200 OK`：
 ```json

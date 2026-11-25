@@ -71,6 +71,10 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
             let status = optional_string(&payload, "status")?;
             hub.with_api(|api, token| api.list_demands(token, status))
         }
+        "get_demand" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.get_demand(token, demand_id))
+        }
         "cancel_demand" => hub.cancel_demand(required_string(&payload, "demandId")?),
         "complete_demand" => hub.complete_demand(required_string(&payload, "demandId")?),
         "list_demand_revisions" => {
@@ -117,9 +121,35 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
                     return Err(Failure::invalid_request());
                 }
             }
-            hub.with_api(|api, token| api.sync_local_profile(token, &payload))
+            hub.sync_local_profile(&payload)
         }
-        "get_profile" => hub.with_api(|api, token| api.get_profile(token)),
+        "edit_profile_fields" => {
+            if payload["confirmed"] != true {
+                return Err(Failure::confirmation_required());
+            }
+            let mut body = payload;
+            body.as_object_mut()
+                .expect("confirmed field implies object")
+                .remove("confirmed");
+            hub.edit_profile_fields(body)
+        }
+        "get_profile" => hub.get_profile(),
+        "set_modeling_consent" => {
+            if payload["confirmed"] != true {
+                return Err(Failure::confirmation_required());
+            }
+            let mut body = payload;
+            body.as_object_mut()
+                .expect("confirmed field implies object")
+                .remove("confirmed");
+            hub.set_modeling_consent(&body)
+        }
+        "profile_sync_status" => hub.profile_sync_status(),
+        "save_profile_draft" => hub.save_profile_draft(payload["changes"].clone()),
+        "discard_profile_draft" => hub.discard_profile_draft(),
+        "discard_failed_profile_edit" => {
+            hub.discard_failed_profile_edit(required_string(&payload, "mutationId")?)
+        }
         _ => Err(Failure::new("unknown_action", "未知的托盘操作。")),
     }
 }

@@ -1,4 +1,4 @@
-use crate::api::{Api, ApiResult, Event, Failure};
+use crate::api::{Api, ApiResult, Event, EventBatch, Failure};
 use crate::outbox::Outbox;
 use crate::session::{Member, NotificationState, Session, SessionStore};
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ pub enum View {
     Demands,
     Detail,
     Room,
+    Profile,
 }
 
 #[derive(Clone, Serialize)]
@@ -736,6 +737,81 @@ impl Hub {
         )
     }
 
+    fn profile_action(
+        &self,
+        notify: bool,
+        call: impl FnOnce(&mut Outbox, &Api, &Session) -> ApiResult,
+    ) -> ApiResult {
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(
+            |api, session| call(&mut outbox, api, session),
+            |_, _, _| notify.then(Update::default),
+        )
+    }
+
+    pub fn get_profile(&self) -> ApiResult {
+        self.profile_action(false, |outbox, api, session| {
+            outbox.profiles.get_profile(api, session)
+        })
+    }
+
+    pub fn set_modeling_consent(&self, body: &Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.set_modeling_consent(api, session, body)
+        })
+    }
+
+    pub fn set_inference_control(&self, body: &Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.set_inference_control(api, session, body)
+        })
+    }
+
+    pub fn profile_sync_status(&self) -> ApiResult {
+        self.profile_action(false, |outbox, api, session| {
+            Ok(outbox.profiles.status(api, session))
+        })
+    }
+
+    pub fn save_profile_draft(&self, changes: Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.save_draft(api, session, changes)
+        })
+    }
+
+    pub fn discard_profile_draft(&self) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.discard_draft(api, session)
+        })
+    }
+
+    pub fn discard_failed_profile_edit(&self, mutation_id: &str) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.discard_failed_edit(api, session, mutation_id)
+        })
+    }
+
+    pub fn edit_profile_fields(&self, body: Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            let wait_for_withdrawal = outbox.has_pending_withdrawal(api, session);
+            outbox.profiles.submit(api, session, body, wait_for_withdrawal)
+        })
+    }
+
+    pub fn sync_local_profile(&self, body: &Value) -> ApiResult {
+        self.profile_action(false, |outbox, api, session| {
+            if outbox.has_pending_withdrawal(api, session)
+                || outbox.profiles.has_pending_delete(api, session)
+            {
+                return Err(Failure::new(
+                    "profile_sync_pending",
+                    "请等待撤回与资料删除同步完成。",
+                ));
+            }
+            outbox.profiles.legacy_sync(api, session, body)
+        })
+    }
+
     fn flush_submissions(&self) {
         let mut outbox = self.outbox.lock().expect("demand outbox");
         let _ = self.authenticated_session(
@@ -833,15 +909,33 @@ impl Hub {
     }
 
     pub fn cancel_demand(&self, id: &str) -> ApiResult {
-        self.refresh_after(|api, token| api.cancel_demand(token, id))
+        self.authenticated(
+            |api, token| api.cancel_demand(token, id),
+            |runtime, value, _| {
+                if value["demand"]["status"] == "cancelled" {
+                    runtime.clear_withdrawn_demand(id);
+                }
+                Some(Update {
+                    refresh_lists: true,
+                    ..Update::default()
+                })
+            },
+        )
     }
 
     pub fn complete_demand(&self, id: &str) -> ApiResult {
         self.refresh_after(|api, token| api.complete_demand(token, id))
     }
 
-    pub fn feedback_response(&self, response_id: &str, feedback: &str) -> ApiResult {
-        self.refresh_after(|api, token| api.feedback_response(token, response_id, feedback))
+    pub fn feedback_response(
+        &self,
+        response_id: &str,
+        feedback: &str,
+        expected_updated_at: Option<&str>,
+    ) -> ApiResult {
+        self.refresh_after(|api, token| {
+            api.feedback_response(token, response_id, feedback, expected_updated_at)
+        })
     }
 
     pub fn vote_room_retention(&self, room_id: &str, keep: bool) -> ApiResult {
@@ -923,7 +1017,7 @@ impl Hub {
         let mut runtime = self.runtime.lock().expect("hub state");
         if runtime.navigation_id == navigation_id && self.session.get().is_some() {
             let (demand_id, room_id) = match view {
-                View::Demands => (None, None),
+                View::Demands | View::Profile => (None, None),
                 View::Detail => (demand_id, None),
                 View::Room => {
                     let demand_id = demand_id.or_else(|| {
@@ -977,13 +1071,32 @@ impl Hub {
             self.flush_submissions();
             let started = Instant::now();
             match self.api.events(&session.token, after) {
-                Ok(mut events) => {
+                Ok(EventBatch {
+                    mut events,
+                    last_seq,
+                }) => {
                     events.sort_by_key(|event| event.seq);
+                    let mut revocations = events.iter()
+                        .filter(|event| matches!(event.kind.as_str(), "profile.modeling.revoked" | "profile.inference.changed"))
+                        .map(|event| (event.kind.as_str(), &event.data))
+                        .peekable();
+                    if revocations.peek().is_some() {
+                        let updated = self.outbox.lock().expect("demand outbox")
+                            .profiles.observe_profile_changes(&self.api, &session, revocations);
+                        if updated.is_err() {
+                            self.wait_to_retry(generation, Duration::from_secs(2));
+                            continue;
+                        }
+                    }
                     let mut runtime = self.runtime.lock().expect("hub state");
                     if runtime.generation != generation {
                         continue;
                     }
                     let new_notice = runtime.receive_events(&mut events, &session.member.id);
+                    if last_seq > runtime.last_seq {
+                        runtime.last_seq = last_seq;
+                        runtime.notification_state_dirty = true;
+                    }
                     self.persist_notification_state(&mut runtime);
                     if !events.is_empty() {
                         let refresh_lists = events.iter().any(|event| {
