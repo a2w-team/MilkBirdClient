@@ -248,6 +248,34 @@ function renderSubmissions(submissions) {
   $('outbox-wrap').hidden = rows.length === 0
 }
 
+function renderProfileSync({ draft, edits = [] }) {
+  const labels = { campus: '常驻校区', bio: '个人简介' }
+  const states = { pending: '待同步', conflict: '资料有冲突，待确认', failed: '同步失败' }
+  function row(label, changes, error, action) {
+    const item = node('div', undefined, 'spec-row')
+    const description = node('div', undefined, 'spec-v')
+    const fields = Object.keys(changes).map(field => labels[field] || field.slice('preferences.'.length))
+    description.append(node('strong', label), node('div', fields.join(' · '), 'muted'))
+    if (error) description.append(node('div', error, 'muted'))
+    item.append(description)
+    if (action) item.append(action)
+    return item
+  }
+  const rows = edits.map(edit => row(states[edit.status], edit.changes, edit.error?.message,
+    edit.status === 'pending' ? null : makeButton('移除', async () => {
+      await invoke('discard_failed_profile_edit', { mutationId: edit.mutationId })
+      await sync()
+    }, 'btn-quiet danger-text')))
+  if (draft) {
+    rows.unshift(row('草稿 · 未提交', draft, null, makeButton('取消草稿', async () => {
+      await invoke('discard_profile_draft')
+      await sync()
+    }, 'btn-quiet danger-text')))
+  }
+  $('profile-sync-items').replaceChildren(...rows)
+  $('profile-sync-wrap').hidden = rows.length === 0
+}
+
 function renderDemandsHome() {
   $('slot-count').textContent = `${cache.activeCount}/${cache.maxActive}`
   const openBtn = $('open-new-sheet')
@@ -732,6 +760,7 @@ async function sync(update, force = false) {
   if (accountChanged) {
     cache = { demands: [], activeCount: 0, maxActive: 3, matches: [], rooms: [], responsesByDemand: new Map(), revisionsByDemand: new Map() }
     renderSubmissions([])
+    renderProfileSync({})
     chat = null
     selectedDemandId = null
     selectedRoomId = null
@@ -750,9 +779,13 @@ async function sync(update, force = false) {
     setView(targetView, next.demandId || null, next.roomId || null)
   }
 
-  const { submissions } = await invoke('list_submissions')
+  const [{ submissions }, profileSync] = await Promise.all([
+    invoke('list_submissions'),
+    invoke('profile_sync_status')
+  ])
   if (revision !== syncRevision) return
   renderSubmissions(submissions)
+  renderProfileSync(profileSync)
 
   const onlyChatMessages = !refresh && !accountChanged && !navigated && events.length > 0 && events.every(e => e.type === 'room.message')
   if (onlyChatMessages) {

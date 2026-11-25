@@ -121,7 +121,7 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
                     return Err(Failure::invalid_request());
                 }
             }
-            hub.with_api(|api, token| api.sync_local_profile(token, &payload))
+            hub.sync_local_profile(&payload)
         }
         "edit_profile_fields" => {
             if payload["confirmed"] != true {
@@ -131,9 +131,15 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
             body.as_object_mut()
                 .expect("confirmed field implies object")
                 .remove("confirmed");
-            hub.with_api(|api, token| api.edit_profile_fields(token, &body))
+            hub.edit_profile_fields(body)
         }
-        "get_profile" => hub.with_api(|api, token| api.get_profile(token)),
+        "get_profile" => hub.get_profile(),
+        "profile_sync_status" => hub.profile_sync_status(),
+        "save_profile_draft" => hub.save_profile_draft(payload["changes"].clone()),
+        "discard_profile_draft" => hub.discard_profile_draft(),
+        "discard_failed_profile_edit" => {
+            hub.discard_failed_profile_edit(required_string(&payload, "mutationId")?)
+        }
         _ => Err(Failure::new("unknown_action", "未知的托盘操作。")),
     }
 }

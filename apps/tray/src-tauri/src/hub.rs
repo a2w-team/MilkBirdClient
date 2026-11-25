@@ -602,6 +602,69 @@ impl Hub {
         )
     }
 
+    fn profile_action(
+        &self,
+        notify: bool,
+        call: impl FnOnce(&mut Outbox, &Api, &Session) -> ApiResult,
+    ) -> ApiResult {
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(
+            |api, session| call(&mut outbox, api, session),
+            |_, _, _| notify.then(Update::default),
+        )
+    }
+
+    pub fn get_profile(&self) -> ApiResult {
+        self.profile_action(false, |outbox, api, session| {
+            outbox.profiles.get_profile(api, session)
+        })
+    }
+
+    pub fn profile_sync_status(&self) -> ApiResult {
+        self.profile_action(false, |outbox, api, session| {
+            Ok(outbox.profiles.status(api, session))
+        })
+    }
+
+    pub fn save_profile_draft(&self, changes: Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.save_draft(api, session, changes)
+        })
+    }
+
+    pub fn discard_profile_draft(&self) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.discard_draft(api, session)
+        })
+    }
+
+    pub fn discard_failed_profile_edit(&self, mutation_id: &str) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.discard_failed_edit(api, session, mutation_id)
+        })
+    }
+
+    pub fn edit_profile_fields(&self, body: Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            let wait_for_withdrawal = outbox.has_pending_withdrawal(api, session);
+            outbox.profiles.submit(api, session, body, wait_for_withdrawal)
+        })
+    }
+
+    pub fn sync_local_profile(&self, body: &Value) -> ApiResult {
+        self.profile_action(false, |outbox, api, session| {
+            if outbox.has_pending_withdrawal(api, session)
+                || outbox.profiles.has_pending_delete(api, session)
+            {
+                return Err(Failure::new(
+                    "profile_sync_pending",
+                    "请等待撤回与资料删除同步完成。",
+                ));
+            }
+            outbox.profiles.legacy_sync(api, session, body)
+        })
+    }
+
     fn flush_submissions(&self) {
         let mut outbox = self.outbox.lock().expect("demand outbox");
         let _ = self.authenticated_session(

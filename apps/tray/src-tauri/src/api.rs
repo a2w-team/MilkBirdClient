@@ -20,7 +20,7 @@ fn next_client_msg_id() -> String {
     format!("tray-{nanos}-{seq}")
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Failure {
     pub code: String,
     pub message: String,

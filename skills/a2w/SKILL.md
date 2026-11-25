@@ -53,6 +53,7 @@ disable-model-invocation: true
 
 ## 多设备资料编辑
 
-1. 运行 `get-profile`，只读取本次要保存或删除的俱乐部字段及其版本。每个字段从 `localProfile.fieldVersions` 取 `version`；从未写入的字段用 `0`。对于标记为 `deleted` 的字段，沿用删除后的版本，恢复值须由成员明确确认。
-2. 回读拟改的字段和值，请成员确认。确认后运行 `sync-profile-fields --confirmed --mutation-id … --changes-json …`。只发送本次确认的字段。字段名为 `campus`、`bio` 或如 `preferences.food` 的偏好键，每项填 `{baseRevision, value}`，删除时 `value` 填 `null`。
-3. 超时时复用原编号和原字段编辑。`profile_conflict` 表示整批编辑都未保存。重新读取资料，仅对版本冲突的字段展示当前值和拟改值，让成员选择。选择保留当前值时，从这次编辑移除该字段。其余已确认的编辑和获准覆盖的字段使用适用版本及新编号提交。收到 `idempotency_conflict` 时核对原确认单与当前资料，再由成员决定是否提交新编辑。
+1. 运行 `get-profile`，只读取本次要保存或删除的俱乐部字段。`profileSource: cache` 表示本机上次同步的记录，向成员标明。每个字段从 `localProfile.fieldVersions` 取 `version`，从未写入的字段用 `0`。对于标记为 `deleted` 的字段，沿用删除后的版本，恢复值须由成员明确确认。
+2. 回读拟改的字段和值。字段名为 `campus`、`bio` 或如 `preferences.food` 的偏好键，每项填 `{baseRevision, value}`，删除用 `null`。用户要暂存未确认编辑时，用 `save-profile-draft --changes-json …`。取消草稿用 `discard-profile-draft`，只清理本机草稿。
+3. 成员确认后，用 `sync-profile-fields --confirmed --mutation-id … --changes-json …` 提交确认过的字段。回执含 `localProfile` 时说明后台已保存。收到 `profileEdit.status: pending` 时说明资料待同步，托盘会用原编号及原字段编辑重试。用 `profile-sync-status` 查看草稿和队列。调用超时时也沿用原编号和编辑。
+4. 收到 `profile_conflict` 或队列的 `conflict` 时，整批编辑均未保存。先用 `get-profile` 读回后台当前值。如果仍只有缓存，等恢复连接再处理冲突。对冲突字段回读当前值和拟改值，请成员选择。保留当前值时从新编辑中移除该字段。其余已确认的编辑和明确获准的恢复或覆盖使用当前版本与新编号。用 `discard-failed-profile-edit --mutation-id …` 移除已经处理的失败记录。遇到 `idempotency_conflict` 时核对原确认单和当前资料，再由成员决定是否提交新编辑。

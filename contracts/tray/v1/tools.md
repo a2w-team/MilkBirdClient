@@ -50,8 +50,12 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | `vote_room_retention` | `{roomId, keep: boolean}` | 转发 `POST /api/v1/rooms/:id/retention-vote`，返回 Hub 的投票结果 |
 | `notify` | `{title, body, demandId?, matchId?, roomId?}` | 显示轻通知。点击后优先打开 `roomId`，其次打开 `demandId` 详情，其余情况打开需求列表。未读数由 Hub 事件维护。返回 `{}` |
 | `sync_local_profile` | `{campus?, preferences?, bio?}` | 转发 `PUT /api/v1/profile/local`，返回 `{localProfile}` |
-| `edit_profile_fields` | `{confirmed: true, mutationId, changes}` | 删除本机确认标记后转发 `PATCH /api/v1/profile/local`，返回 `{localProfile, fieldChanges}` |
-| `get_profile` | `{}` | 转发 `GET /api/v1/profile`，返回 `{localProfile, cloudProfile}` |
+| `edit_profile_fields` | `{confirmed: true, mutationId, changes}` | 保存已确认的字段编辑。后台确认后返回 `{localProfile, fieldChanges}`。等待同步时，返回 `{profileEdit}` |
+| `get_profile` | `{}` | 读取后台资料并更新本机缓存。临时不可达时，已有的缓存附带 `profileSource: "cache"` |
+| `profile_sync_status` | `{}` | 返回当前账号本机的 `{confirmedProfileCached, draft, edits}`，离线可用 |
+| `save_profile_draft` | `{changes}` | 保存未确认草稿，返回 `{status: "draft"}` |
+| `discard_profile_draft` | `{}` | 清除当前账号的草稿，返回 `{status: "discarded"}` |
+| `discard_failed_profile_edit` | `{mutationId}` | 移除已被后台拒绝的本机编辑记录，返回 `{status: "discarded"}` |
 
 `unreadByDemand` 以需求 ID 为键，值为 `{responseCount, roomMessageCount}`。`unreadByRoom` 以群聊 ID 为键，值为群消息未读数。`unreadCount` 等于所有 `responseCount` 加上所有群消息未读数。
 
@@ -66,6 +70,8 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 `sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。
 
 多设备编辑使用 `sync-profile-fields --confirmed --mutation-id … --changes-json …`。`changes` 按字段名填写 `{baseRevision, value}`。从 `localProfile.fieldVersions` 读取当前版本，版本缺省时用 `0`，删除时用 `value: null`。遇到 `profile_conflict` 时重新读取资料，将当前值和拟修改值交给成员选择。提交超时保留原编号和原字段编辑重试。
+
+`save-profile-draft --changes-json …` 和 `discard-profile-draft` 只读写本机。确认提交与草稿内容一致的编辑后，草稿转入待同步队列。`profile-sync-status` 中的 `edits` 包含原 `mutationId`、`changes`、`status` 和 `error`，状态为 `pending`、`conflict` 或 `failed`。重连后先处理撤回和删除，再提交其余编辑。只有后台确认的值才会进入缓存。可以用 `discard-failed-profile-edit --mutation-id …` 移除失败记录。
 
 ## 4. 程序驱动 vs LLM 驱动配合规则
 

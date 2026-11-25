@@ -1,11 +1,10 @@
 use crate::api::{Api, ApiResult, Failure};
-use crate::session::{Session, write_private_json};
+use crate::profile_cache::ProfileCache;
+use crate::session::{Session, read_private_json, write_private_json};
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs::{self, File};
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,25 +45,18 @@ impl PendingDemand {
 pub struct Outbox {
     path: PathBuf,
     entries: Vec<PendingDemand>,
+    pub profiles: ProfileCache,
 }
 
 impl Outbox {
     pub fn open(dir: &Path) -> io::Result<Self> {
         let path = dir.join("demand-outbox.json");
-        let entries = match fs::symlink_metadata(&path) {
-            Ok(meta) if meta.is_file() && meta.permissions().mode() & 0o777 == 0o600 => {
-                serde_json::from_reader(File::open(&path)?)?
-            }
-            Ok(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "outbox must be a private regular file",
-                ));
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error),
-        };
-        Ok(Self { path, entries })
+        let entries = read_private_json(&path)?.unwrap_or_default();
+        Ok(Self {
+            path,
+            entries,
+            profiles: ProfileCache::open(dir)?,
+        })
     }
 
     fn edit(&mut self, change: impl FnOnce(&mut Vec<PendingDemand>)) -> ApiResult<()> {
@@ -129,6 +121,11 @@ impl Outbox {
                 index
             }
         };
+        if self.has_pending_withdrawal(api, session)
+            || self.profiles.has_pending_delete(api, session)
+        {
+            return Ok(json!({ "submission": self.entries[index].receipt() }));
+        }
         match self.deliver(api, session, index, false) {
             Ok(Some(result)) => Ok(result),
             Ok(None) => Ok(json!({ "submission": self.entries[index].receipt() })),
@@ -177,6 +174,15 @@ impl Outbox {
         let mut changed = false;
         let mut delivered = Vec::new();
         for withdrawing in [true, false] {
+            if !withdrawing {
+                for deleting in [true, false] {
+                    let (edited, offline) = self.profiles.flush(api, session, deleting)?;
+                    changed |= edited;
+                    if offline {
+                        return Ok((changed, delivered));
+                    }
+                }
+            }
             let mut index = 0;
             while index < self.entries.len() {
                 let item = &self.entries[index];
@@ -201,6 +207,12 @@ impl Outbox {
             }
         }
         Ok((changed, delivered))
+    }
+
+    pub fn has_pending_withdrawal(&self, api: &Api, session: &Session) -> bool {
+        self.entries.iter().any(|entry| {
+            entry.belongs_to(api, session) && entry.withdrawing && entry.failed.is_none()
+        })
     }
 
     // A lost HTTP reply leaves the original queued confirmation available for idempotent delivery.

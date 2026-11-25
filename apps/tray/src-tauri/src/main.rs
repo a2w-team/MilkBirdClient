@@ -2,6 +2,7 @@ mod api;
 mod bridge;
 mod hub;
 mod outbox;
+mod profile_cache;
 mod session;
 
 use api::{Api, ApiResult, Failure};
@@ -191,7 +192,22 @@ async fn leave_room(state: State<'_, Arc<Hub>>, room_id: String) -> ApiResult {
 
 #[tauri::command]
 async fn get_profile(state: State<'_, Arc<Hub>>) -> ApiResult {
-    blocking(state, |hub| hub.with_api(Api::get_profile)).await
+    blocking(state, Hub::get_profile).await
+}
+
+#[tauri::command]
+async fn profile_sync_status(state: State<'_, Arc<Hub>>) -> ApiResult {
+    blocking(state, Hub::profile_sync_status).await
+}
+
+#[tauri::command]
+async fn discard_profile_draft(state: State<'_, Arc<Hub>>) -> ApiResult {
+    blocking(state, Hub::discard_profile_draft).await
+}
+
+#[tauri::command]
+async fn discard_failed_profile_edit(state: State<'_, Arc<Hub>>, mutation_id: String) -> ApiResult {
+    blocking(state, move |hub| hub.discard_failed_profile_edit(&mutation_id)).await
 }
 
 #[tauri::command]
@@ -437,6 +453,9 @@ fn main() {
             vote_room_retention,
             leave_room,
             get_profile,
+            profile_sync_status,
+            discard_profile_draft,
+            discard_failed_profile_edit,
             mark_demand_read,
             mark_room_read,
             clear_unread,

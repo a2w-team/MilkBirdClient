@@ -133,6 +133,12 @@ def parse_arguments():
     profile_fields.add_argument("--mutation-id", dest="mutationId", required=True, type=required_text)
     profile_fields.add_argument("--changes-json", dest="changes", required=True, type=json_object)
     command("get-profile", "Read your profile.")
+    command("profile-sync-status", "Check cached profile, draft and confirmed edits on this device.")
+    command("save-profile-draft", "Keep unconfirmed edits on this device.").add_argument(
+        "--changes-json", dest="changes", required=True, type=json_object)
+    command("discard-profile-draft", "Discard the local profile draft.")
+    command("discard-failed-profile-edit", "Remove a failed edit from the local queue.").add_argument(
+        "--mutation-id", dest="mutationId", required=True, type=required_text)
 
     payload = vars(parser.parse_args())
     action = payload.pop("action")
