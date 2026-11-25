@@ -6,7 +6,7 @@ const appWindow = window.__TAURI__.window.getCurrentWindow()
 const $ = id => document.getElementById(id)
 
 let bootstrap
-let view = 'demands' // demands | detail | room
+let view = 'demands' // demands | detail | room | profile
 let selectedDemandId = null
 let selectedRoomId = null
 let revisionsOpen = false
@@ -26,6 +26,12 @@ let syncRevision = 0
 let loadRevision = 0
 let pendingEvents = []
 let pendingRefresh = false
+let profileRevision = 0
+let accountProfile = null
+let profileDemands = null
+let profileGrantsFresh = false
+let queuedWithdrawals = new Map()
+let recommendationDetail = null
 
 function node(tag, text, className) {
   const el = document.createElement(tag)
@@ -80,7 +86,11 @@ function memberName(member) {
 }
 
 function formatReason(raw) {
-  const map = { same_category_and_campus: '同校区 · 时间相容' }
+  const map = {
+    same_category_and_campus: '同校区 · 时间相容',
+    ranked_peer: '符合推荐条件',
+    ranked_member_request: '符合推荐条件'
+  }
   return map[raw] || raw || ''
 }
 
@@ -191,10 +201,19 @@ function renderShell() {
   $('view-demands').hidden = view !== 'demands'
   $('view-detail').hidden = view !== 'detail'
   $('view-room').hidden = view !== 'room'
+  $('view-profile').hidden = view !== 'profile'
+  $('do-not-disturb').checked = Boolean(bootstrap.doNotDisturb)
+  const anchor = $(view === 'profile' ? 'profile-sync-anchor' : 'demand-sync-anchor')
+  const syncPanel = $('profile-sync-wrap')
+  if (anchor.nextElementSibling !== syncPanel) anchor.after(syncPanel)
 }
 
 function setView(next, demandId = null, roomId = null) {
-  if (next !== 'detail' || demandId !== selectedDemandId) revisionsOpen = false
+  if (next !== 'profile' && $('profile-confirm').open) $('profile-confirm').close('cancel')
+  if (next !== 'detail' || demandId !== selectedDemandId) {
+    revisionsOpen = false
+    clearRecommendations()
+  }
   view = next
   if (demandId !== undefined) selectedDemandId = demandId
   if (roomId !== undefined) selectedRoomId = roomId
@@ -230,7 +249,10 @@ async function openDemandDetail(demandId) {
   await invoke('mark_demand_read', { demandId }).catch(() => {})
   if (!isCurrent()) return
   await Promise.all([loadDemandResponses(demandId), loadDemandRevisions(demandId)])
-  if (isCurrent()) renderDetail()
+  if (isCurrent()) {
+    renderDetail()
+    refreshRecommendationStatus()
+  }
 }
 
 async function openChatRoom(roomId, demandId = null) {
@@ -240,6 +262,236 @@ async function openChatRoom(roomId, demandId = null) {
   await invoke('mark_room_read', { roomId, demandId: resolvedDemand || undefined }).catch(() => {})
   renderRoomHeader()
   await loadMessages()
+}
+
+function renderSubmissions(submissions) {
+  const statusLabels = { pending: '待提交', withdrawing: '待撤回', failed: '提交失败',
+    withdrawal_failed: '撤回失败', expired: '已过期' }
+  const rows = submissions.map(item => {
+    const row = node('div', undefined, 'spec-row')
+    const text = node('div', undefined, 'spec-v')
+    text.append(node('strong', item.title || '需求'), node('div', statusLabels[item.status], 'muted'))
+    if (item.error) text.append(node('div', item.error, 'muted'))
+    row.append(text)
+    if (item.status !== 'withdrawing') {
+      const label = item.status === 'withdrawal_failed' ? '重试撤回' : '撤回'
+      row.append(makeButton(label, async () => {
+        await invoke('withdraw_submission', { idempotencyKey: item.idempotencyKey })
+        await sync()
+      }, 'btn-quiet danger-text'))
+    }
+    return row
+  })
+  $('outbox-items').replaceChildren(...rows)
+  $('outbox-wrap').hidden = rows.length === 0
+}
+
+async function refreshLocalSync(revision, memberId) {
+  const [queue, profile] = await Promise.allSettled([
+    invoke('list_submissions'),
+    invoke('profile_sync_status')
+  ])
+  if (revision !== syncRevision || bootstrap?.member?.id !== memberId) return
+  if (queue.status === 'fulfilled' && queue.value.memberId === memberId) {
+    const submissions = queue.value.submissions
+    queuedWithdrawals = new Map(submissions.map(item => [item.idempotencyKey, item.status]))
+    renderSubmissions(submissions)
+  }
+  if (profile.status === 'fulfilled' && profile.value.memberId === memberId) {
+    renderProfileSync(profile.value)
+  }
+  if (view === 'profile') renderAccountProfile()
+  for (const result of [queue, profile]) {
+    if (result.status === 'rejected' && !['not_logged_in', 'session_changed'].includes(result.reason?.code)) {
+      report(result.reason)
+    }
+  }
+}
+
+function renderProfileSync({ draft, edits = [] }) {
+  const labels = { campus: '常驻校区', bio: '个人简介' }
+  const states = { pending: '待同步', conflict: '资料有冲突，待确认', failed: '同步失败' }
+  function row(label, changes, error, action) {
+    const item = node('div', undefined, 'spec-row')
+    const description = node('div', undefined, 'spec-v')
+    const fields = Object.keys(changes).map(field => labels[field] || field.slice('preferences.'.length))
+    description.append(node('strong', label), node('div', fields.join(' · '), 'muted'))
+    if (error) description.append(node('div', error, 'muted'))
+    item.append(description)
+    if (action) item.append(action)
+    return item
+  }
+  const rows = edits.map(edit => row(states[edit.status], edit.changes, edit.error?.message,
+    edit.status === 'pending' ? null : makeButton('移除', async () => {
+      await invoke('discard_failed_profile_edit', { mutationId: edit.mutationId })
+      await sync()
+    }, 'btn-quiet danger-text')))
+  if (draft) {
+    rows.unshift(row('草稿 · 未提交', draft, null, makeButton('取消草稿', async () => {
+      await invoke('discard_profile_draft')
+      await sync()
+    }, 'btn-quiet danger-text')))
+  }
+  $('profile-sync-items').replaceChildren(...rows)
+  $('profile-sync-wrap').hidden = rows.length === 0
+}
+
+function profileRow(label, description, action) {
+  const row = node('div', undefined, 'spec-row')
+  const text = node('div', undefined, 'spec-v')
+  text.append(node('strong', label), node('div', description, 'muted'))
+  row.append(text)
+  if (action) row.append(action)
+  return row
+}
+
+async function confirmProfileChange(title, message) {
+  const dialog = $('profile-confirm')
+  if (dialog.open) return false
+  const memberId = bootstrap?.member?.id
+  $('profile-confirm-title').textContent = title
+  $('profile-confirm-message').textContent = message
+  const listeners = new AbortController()
+  const options = { signal: listeners.signal }
+  try {
+    const confirmed = new Promise(resolve => {
+      dialog.addEventListener('close', () => {
+        if (!dialog.open) resolve(false)
+      }, options)
+      dialog.addEventListener('submit', event => {
+        event.preventDefault()
+        dialog.close()
+        resolve(event.submitter?.value === 'confirm')
+      }, options)
+    })
+    dialog.showModal()
+    return await confirmed && bootstrap?.member?.id === memberId
+  } finally {
+    listeners.abort()
+  }
+}
+
+function renderInferences(cached) {
+  const controls = accountProfile?.inferenceControls || {}
+  const inferences = accountProfile?.cloudProfile?.inferences || []
+  const live = Boolean(accountProfile) && !cached
+  const change = (tag, action) => makeButton({ correct: '纠正', disable: '停用', enable: '恢复' }[action], async () => {
+    const labels = { correct: ['纠正推断', '清除这项推断，并停止使用它的在途匹配。以后仅用新记录重新判断。'],
+      disable: ['停用推断', '停止生成这项推断，并停止使用它的在途匹配。'],
+      enable: ['恢复推断', '允许俱乐部根据恢复后的新记录重新判断。'] }
+    const [title, message] = labels[action]
+    if (!await confirmProfileChange(`${title} · ${tag}`, message)) return
+    const result = await invoke('set_inference_control', { confirmed: true, tag, action, baseRevision: controls[tag]?.revision || 0 })
+    await sync()
+    const closed = result.revokedDemandIds?.length || 0
+    feedback(closed ? `设置已保存，已停止 ${closed} 条需求。` : '推断设置已保存。')
+  }, 'btn-quiet')
+
+  const liveTags = new Set(inferences.map(inference => inference.tag))
+  const rows = inferences.map(inference => {
+    const block = node('section', undefined, 'spec-row inference-row')
+    const content = node('div', undefined, 'spec-v')
+    content.append(node('strong', inference.tag), node('div',
+      `规则置信度 ${Math.round(inference.confidence * 100)}% · 有效至 ${shortTime(inference.expiresAt)}`, 'muted'))
+    const details = node('details', undefined, 'inference-sources')
+    details.append(node('summary', `依据 ${inference.sources.length} 条记录`), node('p',
+      `规则 ${inference.ruleVersion} · 生成于 ${shortTime(inference.generatedAt)}`, 'muted'))
+    const labels = { demand: '本人需求', invitation: '邀请决定', response_feedback: '回应反馈' }
+    const values = { accept: '接受', decline: '拒绝', useful: '有用', dismissed: '不合适' }
+    const demands = profileDemands ?? cache.demands
+    const evidence = node('ul')
+    for (const source of inference.sources) {
+      const demand = demands.find(item => item.id === source.demandId)
+      const choice = source.kind === 'demand' ? '' : values[source.value]
+      evidence.append(node('li', [labels[source.kind], demand?.title, choice,
+        shortTime(source.observedAt), `来源授权 v${source.consentRevision}`].filter(Boolean).join(' · ')))
+    }
+    details.append(evidence)
+    content.append(details)
+    block.append(content)
+    if (live) {
+      const actions = node('div', undefined, 'inference-actions')
+      actions.append(change(inference.tag, 'correct'), change(inference.tag, 'disable'))
+      block.append(actions)
+    }
+    return block
+  })
+
+  for (const [tag, control] of Object.entries(controls)) {
+    if (liveTags.has(tag)) continue
+    if (control.action === 'disable') rows.push(profileRow(tag, '已停用', live ? change(tag, 'enable') : null))
+    if (control.action === 'correct') rows.push(profileRow(tag, '已纠正 · 等待新记录'))
+  }
+  $('profile-inferred').replaceChildren(...(rows.length ? rows : [node('span',
+    accountProfile ? '暂无可用推断' : '暂时无法读取', 'muted')]))
+}
+
+function renderAccountProfile() {
+  const cached = accountProfile?.profileSource === 'cache'
+  $('profile-source').textContent = accountProfile ? (cached ? '上次同步' : '服务端已确认') : '资料暂不可用'
+  const local = accountProfile?.localProfile
+  const personal = []
+  if (local?.campus) personal.push(['常驻校区', local.campus])
+  if (local?.bio) personal.push(['个人简介', local.bio])
+  for (const [field, value] of Object.entries(local?.preferences || {})) {
+    personal.push([field, typeof value === 'object' ? JSON.stringify(value) : value])
+  }
+  $('profile-personal').replaceChildren(...(personal.length ? personal.map(([field, value]) => {
+    const row = node('div', undefined, 'spec-row')
+    row.append(node('span', field, 'spec-k'), node('span', value, 'spec-v'))
+    return row
+  }) : [node('p', accountProfile ? '暂无本人资料' : '暂时无法读取', 'muted')]))
+
+  renderInferences(cached)
+
+  const sources = [['demands', '需求分类'], ['interactions', '邀请与反馈']]
+  $('profile-modeling').replaceChildren(...sources.map(([source, label]) => {
+    const consent = accountProfile?.modeling?.[source]
+    const action = consent?.enabled ? (source === 'demands' ? '停用推断' : '撤回授权') : '开启授权'
+    const button = makeButton(action, async () => {
+      const enabled = !consent.enabled
+      const message = enabled
+        ? `俱乐部可用新产生的${label}改善后续匹配。`
+        : `俱乐部会清除${label}的建模输入，并停止依赖该来源的进行中需求。`
+      if (!await confirmProfileChange(`${action} · ${label}`, message)) return
+      const result = await invoke('set_modeling_consent', { confirmed: true, source, enabled, baseRevision: consent.revision })
+      await sync()
+      const count = result.revokedDemandIds?.length || 0
+      feedback(count ? `授权已撤回，已停止 ${count} 条需求。` : (enabled ? '授权已开启。' : '授权已撤回。'))
+    }, 'btn compact')
+    button.disabled = !consent || cached
+    const status = consent ? (consent.enabled ? '已授权长期建模' : '长期建模已关闭') : '状态不可用'
+    return profileRow(label, cached ? `上次同步 · ${status}` : status, button)
+  }))
+
+  const labels = { active: '有效', revoked: '已撤回', expired: '已过期', closed: '已结束' }
+  const grants = (profileDemands ?? cache.demands).filter(demand => demand.matchAuthorization)
+  const rows = grants.map(demand => {
+    const grant = demand.matchAuthorization
+    const queued = queuedWithdrawals.get(demand.idempotencyKey)
+    const pending = queued === 'withdrawing'
+    const status = pending ? '撤回待同步' : queued === 'withdrawal_failed' ? '撤回失败' : (labels[grant.status] || '状态不可用')
+    const action = grant.status === 'active' && !pending ? makeButton('撤回', async () => {
+      if (!await confirmProfileChange('撤回单次授权', `「${demand.title}」将停止匹配。`)) return
+      const result = await invoke('withdraw_submission', { idempotencyKey: demand.idempotencyKey })
+      await sync()
+      if (result.submission?.status === 'withdrawing') feedback('已停止本机补发，撤回待同步。')
+      else if (result.demand?.matchAuthorization?.status === 'revoked') feedback('服务端已确认撤回。')
+    }, 'btn-quiet danger-text') : null
+    return profileRow(demand.title, [profileGrantsFresh ? '' : '上次读取', status, shortTime(grant.expiresAt)].filter(Boolean).join(' · '), action)
+  })
+  $('profile-grants').replaceChildren(...(rows.length ? rows : [node('p', profileGrantsFresh ? '暂无单次授权' : '暂时无法读取授权', 'muted')]))
+}
+
+async function refreshAccountProfile() {
+  const revision = ++profileRevision
+  const memberId = bootstrap?.member?.id
+  const [profile, grants] = await Promise.allSettled([invoke('get_profile'), invoke('list_demands')])
+  if (revision !== profileRevision || view !== 'profile' || bootstrap?.member?.id !== memberId) return
+  accountProfile = profile.status === 'fulfilled' ? profile.value : null
+  profileGrantsFresh = grants.status === 'fulfilled'
+  if (profileGrantsFresh) profileDemands = grants.value.demands || []
+  renderAccountProfile()
 }
 
 function renderDemandsHome() {
@@ -369,6 +621,140 @@ function renderRevisions(demandId) {
   }))
 }
 
+function clearRecommendations() {
+  recommendationDetail = null
+  $('detail-recommendations').hidden = true
+  $('recommendation-candidates').replaceChildren()
+}
+
+function canPreviewCandidates(demand) {
+  const grant = demand?.matchAuthorization
+  const expiry = Date.parse(grant?.expiresAt || '')
+  return demand?.status === 'open' && grant?.status === 'active' &&
+    (!Number.isFinite(expiry) || expiry > Date.now())
+}
+
+function recommendationPhase(item) {
+  if (!item) return ''
+  if (item.mode === 'manual' && !['delivered', 'closed'].includes(item.state)) return 'waiting_operator'
+  return item.status || (item.state === 'empty' ? 'no_candidate' : item.state)
+}
+
+function priceLabel(amount) {
+  return Number.isSafeInteger(amount)
+    ? new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(amount / 100)
+    : ''
+}
+
+function candidateRow(candidate) {
+  const row = node('article', undefined, 'spec-row')
+  const content = node('div', undefined, 'spec-v')
+  const kind = candidate.kind === 'info' ? '信息池条目' : '成员需求'
+  content.append(node('strong', candidate.title || kind))
+  const meta = [kind, candidate.source === kind ? '' : candidate.source, candidate.campus, priceLabel(candidate.price)]
+  if (Number.isFinite(candidate.score)) meta.push(`得分 ${candidate.score}`)
+  content.append(node('p', meta.filter(Boolean).join(' · '), 'muted'))
+  if (candidate.kind === 'info' && candidate.summary) content.append(node('p', candidate.summary))
+  const reasons = Array.isArray(candidate.reasons) ? candidate.reasons.filter(reason => typeof reason === 'string') : []
+  if (reasons.length) {
+    const list = node('ul')
+    list.append(...reasons.map(reason => node('li', reason)))
+    content.append(list)
+  }
+  const href = candidate.kind === 'info' && safeExternalUrl(candidate.url)
+  if (href) {
+    const link = node('a', '查看出处 ↗', 'btn compact')
+    link.href = href
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    content.append(link)
+  }
+  row.append(content)
+  return row
+}
+
+function renderRecommendations(demand) {
+  if (!canPreviewCandidates(demand)) {
+    clearRecommendations()
+    return
+  }
+  if (recommendationDetail?.demandId !== demand.id ||
+      recommendationDetail.grantId !== demand.matchAuthorization.grantId) {
+    recommendationDetail = { demandId: demand.id, grantId: demand.matchAuthorization.grantId }
+  }
+  const state = recommendationDetail
+  const ranked = demand.preferences?.fulfillment === 'ranked'
+  const phase = recommendationPhase(state.recommendation)
+  const statuses = {
+    pending: '正在等待自动推荐',
+    no_candidate: '暂无符合条件的候选',
+    waiting_operator: '等待运营确认',
+    delivered: '已投递，可在下方查看',
+    closed: '本轮已结束'
+  }
+  const status = $('recommendation-status')
+  const nextCheck = phase === 'no_candidate' ? shortTime(state.recommendation.nextCheckAt || state.recommendation.dueAt) : ''
+  status.textContent = state.error || (state.pending
+    ? (state.pending === 'rank_demand' ? '正在查询候选' : '正在读取推荐状态')
+    : [statuses[phase], nextCheck && `下次检查 ${nextCheck}`].filter(Boolean).join(' · '))
+  status.hidden = !status.textContent
+  $('detail-recommendations').hidden = false
+  $('candidate-preview').disabled = Boolean(state.pending)
+  $('recommendation-refresh').hidden = !ranked
+  $('recommendation-refresh').disabled = Boolean(state.pending)
+  $('recommendation-recheck').hidden = !ranked || !['pending', 'no_candidate'].includes(phase)
+  $('recommendation-recheck').disabled = Boolean(state.pending)
+
+  const list = $('recommendation-candidates')
+  const preview = state.preview
+  list.hidden = !preview
+  const rows = preview?.candidates.map(candidateRow) || []
+  if (preview && !rows.length) rows.push(node('p', '暂无符合条件的候选', 'muted'))
+  if (preview?.strategyVersion) rows.unshift(node('p', `排序版本 ${preview.strategyVersion}`, 'muted'))
+  list.replaceChildren(...rows)
+}
+
+async function runRecommendation(action) {
+  const demand = cache.demands.find(item => item.id === selectedDemandId)
+  if (view !== 'detail' || !canPreviewCandidates(demand)) return
+  if (action !== 'rank_demand' && demand.preferences?.fulfillment !== 'ranked') return
+  renderRecommendations(demand)
+  const state = recommendationDetail
+  if (state.pending) return
+  if (action === 'recheck_recommendation' &&
+      !['pending', 'no_candidate'].includes(recommendationPhase(state.recommendation))) return
+  state.pending = action
+  state.error = ''
+  if (action === 'rank_demand') state.preview = null
+  renderRecommendations(demand)
+  try {
+    const result = await invoke(action, { demandId: demand.id })
+    if (state !== recommendationDetail) return
+    if (action === 'rank_demand') {
+      if (!Array.isArray(result.candidates)) throw Error('无法读取候选列表')
+      state.preview = result
+    } else {
+      if (!result.recommendation) throw Error('无法读取推荐状态')
+      state.recommendation = result.recommendation
+    }
+  } catch (error) {
+    if (state === recommendationDetail) {
+      state.error = error?.message || '推荐服务暂时不可用'
+      if (['forbidden', 'demand_forbidden', 'demand_not_open', 'match_authorization_required',
+        'matching_authorization_required'].includes(error?.code)) {
+        state.preview = null
+      }
+    }
+  } finally {
+    state.pending = null
+    if (state === recommendationDetail) renderRecommendations(cache.demands.find(item => item.id === selectedDemandId))
+  }
+}
+
+function refreshRecommendationStatus() {
+  runRecommendation('get_recommendation')
+}
+
 function renderDetail() {
   const demand = cache.demands.find(d => d.id === selectedDemandId)
   if (!demand) {
@@ -439,8 +825,16 @@ function renderDetail() {
   ].filter(([, v]) => Boolean(v))
   if (demand.preferences && typeof demand.preferences === 'object') {
     for (const [k, v] of Object.entries(demand.preferences)) {
+      if (k === 'fulfillment' && v === 'ranked') continue
+      if (k === 'budgetMax' || k === 'price') {
+        const label = priceLabel(v)
+        if (label) {
+          fields.push([k === 'budgetMax' ? '预算上限' : '价格', label])
+          continue
+        }
+      }
       if (v !== undefined && v !== null && String(v).trim()) {
-        fields.push([k, Array.isArray(v) ? v.join('、') : String(v)])
+        fields.push([k === 'preferredCampus' ? '优先校区' : k, Array.isArray(v) ? v.join('、') : String(v)])
       }
     }
   }
@@ -450,6 +844,7 @@ function renderDetail() {
     row.append(node('span', k, 'spec-k'), node('span', v, 'spec-v'))
     return row
   }))
+  renderRecommendations(demand)
 
   const list = $('detail-responses')
   const items = []
@@ -487,6 +882,7 @@ function renderDetail() {
     kicker.append(node('strong', `${participants.length}人成团邀请`), node('span', formatReason(match.reason)))
     card.append(kicker)
     card.append(node('div', others[0]?.demandTitle || demand.title, 'card-title'))
+    if (match.why) card.append(node('div', match.why, 'why-box'))
 
     const chips = node('div', undefined, 'participants')
     const decMap = { accept: '✓', decline: '×', pending: '…' }
@@ -550,12 +946,12 @@ function renderDetail() {
     if (!resp.feedback) {
       cardActions.append(
         makeButton('有用', async () => {
-          await invoke('feedback_response', { responseId: resp.id, feedback: 'useful' })
+          await invoke('feedback_response', { responseId: resp.id, feedback: 'useful', expectedUpdatedAt: resp.updatedAt })
           await loadDemandResponses(demand.id)
           renderDetail()
         }, 'btn compact'),
         makeButton('不合适', async () => {
-          await invoke('feedback_response', { responseId: resp.id, feedback: 'dismissed' })
+          await invoke('feedback_response', { responseId: resp.id, feedback: 'dismissed', expectedUpdatedAt: resp.updatedAt })
           await loadDemandResponses(demand.id)
           renderDetail()
         }, 'btn-quiet')
@@ -564,7 +960,7 @@ function renderDetail() {
       cardActions.append(
         node('span', resp.feedback === 'useful' ? '有用' : '不合适', resp.feedback === 'useful' ? 'pill ok' : 'pill'),
         makeButton('撤销', async () => {
-          await invoke('feedback_response', { responseId: resp.id, feedback: '' })
+          await invoke('feedback_response', { responseId: resp.id, feedback: '', expectedUpdatedAt: resp.updatedAt })
           await loadDemandResponses(demand.id)
           renderDetail()
         }, 'btn-quiet')
@@ -684,8 +1080,13 @@ function appendMessages(active, items) {
 
 async function loadDemandResponses(demandId) {
   if (!demandId) return
-  const result = await invoke('list_demand_responses', { demandId })
-  cache.responsesByDemand.set(demandId, result.responses || [])
+  try {
+    const result = await invoke('list_demand_responses', { demandId })
+    cache.responsesByDemand.set(demandId, result.responses || [])
+  } catch (error) {
+    if (error?.code !== 'demand_not_open') throw error
+    cache.responsesByDemand.delete(demandId)
+  }
 }
 
 async function loadDemandRevisions(demandId) {
@@ -742,6 +1143,15 @@ async function sync(update, force = false) {
   if (accountChanged) {
     cache = { demands: [], activeCount: 0, maxActive: 3, matches: [], rooms: [], responsesByDemand: new Map(), revisionsByDemand: new Map() }
     revisionRequests.clear()
+    clearRecommendations()
+    renderSubmissions([])
+    renderProfileSync({})
+    accountProfile = null
+    profileDemands = null
+    profileGrantsFresh = false
+    queuedWithdrawals.clear()
+    if ($('profile-confirm').open) $('profile-confirm').close('cancel')
+    renderAccountProfile()
     chat = null
     pendingRoomSends = new Set()
     selectedDemandId = null
@@ -756,9 +1166,26 @@ async function sync(update, force = false) {
     return
   }
 
+  for (const event of events) {
+    const demand = event.type === 'demand.updated' ? event.data?.demand : null
+    if (demand?.id === selectedDemandId && !canPreviewCandidates(demand)) {
+      const index = cache.demands.findIndex(item => item.id === demand.id)
+      if (index !== -1) cache.demands[index] = demand
+      clearRecommendations()
+    }
+  }
+
   if (navigated) {
-    const targetView = ['demands', 'detail', 'room'].includes(next.activeView) ? next.activeView : 'demands'
+    const targetView = ['demands', 'detail', 'room', 'profile'].includes(next.activeView) ? next.activeView : 'demands'
     setView(targetView, next.demandId || null, next.roomId || null)
+  }
+
+  refreshLocalSync(revision, next.member.id)
+
+  if (view === 'profile') {
+    renderShell()
+    await refreshAccountProfile()
+    return
   }
 
   const onlyChatMessages = !refresh && !accountChanged && !navigated && events.length > 0 && events.every(e => e.type === 'room.message')
@@ -777,7 +1204,10 @@ async function sync(update, force = false) {
   }
 
   if (view === 'demands') renderDemandsHome()
-  else if (view === 'detail') renderDetail()
+  else if (view === 'detail') {
+    renderDetail()
+    if (navigated || refresh || events.length) refreshRecommendationStatus()
+  }
   else if (view === 'room') {
     renderRoomHeader()
     await loadMessages()
@@ -797,6 +1227,36 @@ document.addEventListener('click', event => {
 })
 
 /* Navigation & Actions */
+$('candidate-preview').addEventListener('click', () => runRecommendation('rank_demand'))
+$('recommendation-refresh').addEventListener('click', refreshRecommendationStatus)
+$('recommendation-recheck').addEventListener('click', () => runRecommendation('recheck_recommendation'))
+
+$('open-profile').addEventListener('click', () => {
+  closeAccountMenu()
+  setView('profile')
+  rememberView()
+  sync().catch(report)
+})
+$('profile-back').addEventListener('click', () => {
+  setView('demands')
+  rememberView()
+  renderDemandsHome()
+  sync(undefined, true).catch(report)
+})
+$('reload-profile').addEventListener('click', () => act($('reload-profile'), () => sync()))
+$('do-not-disturb').addEventListener('change', () => {
+  const toggle = $('do-not-disturb')
+  const enabled = toggle.checked
+  act(toggle, async () => {
+    try {
+      await invoke('set_do_not_disturb', { enabled })
+      bootstrap.doNotDisturb = enabled
+    } finally {
+      renderShell()
+    }
+  })
+})
+
 $('back-to-demands').addEventListener('click', () => {
   setView('demands', null, null)
   rememberView()

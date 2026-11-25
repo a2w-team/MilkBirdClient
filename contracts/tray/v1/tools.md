@@ -33,9 +33,15 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | Action | Payload 关键字段 | 行为与返回 `data` |
 |---|---|---|
 | `status` | `{}` | 返回 `{loggedIn, member, apiOrigin, unreadCount, unreadByDemand, unreadByRoom}`；不需要登录 |
-| `submit_demand` | `{confirmed: true, idempotencyKey, category, title, summary?, campus, location?, timeWindow?, partySize?, preferences?, expiresAt?}` | 校验 `confirmed == true` 和已登录；转发 `POST /api/v1/demands`；更新托盘状态并返回 `{demand, matches}`；若立即命中匹配则触发托盘提醒 |
+| `submit_demand` | `{confirmed: true, idempotencyKey, category, title, summary?, campus, location?, timeWindow?, partySize?, preferences?, expiresAt?, matchAuthorization?}` | 登录并确认后保存原提交。后台确认时返回 `{demand, matches}`。临时不可达时返回 `{submission}`，托盘重连后用原键重发 |
+| `list_submissions` | `{}` | 返回当前账号在本机的 `{memberId, submissions}`，离线可用 |
+| `withdraw_submission` | `{idempotencyKey}` | 停止本机补发并用原键撤回。后台返回回执时返回 `{status: "withdrawn", demand}`。离线时返回 `{submission}`，可在重连后继续撤回 |
 | `update_demand` | `{confirmed: true, demandId, title?, summary?, campus?, location?, timeWindow?, partySize?, preferences?, expiresAt?, changeNote?}` | 校验确认和登录；将变更字段转发至 `PATCH /api/v1/demands/:id`，返回 `{demand, matches}`。成功后刷新列表，有匹配时触发托盘提醒 |
 | `list_demands` | `{status?}` | 转发 `GET /api/v1/demands`，返回 `{demands}` |
+| `get_demand` | `{demandId}` | 转发 `GET /api/v1/demands/:id`，返回 `{demand}` 及其授权状态 |
+| `rank_demand` | `{demandId}` | 只读预览本人已有单次授权的需求候选，返回 `{strategyVersion, candidates}` |
+| `get_recommendation` | `{demandId}` | 查询明确开启自动推荐的需求，返回 `{recommendation}` |
+| `recheck_recommendation` | `{demandId}` | 给本人已确认自动推荐的有效需求安排重查，返回 `{recommendation}` |
 | `cancel_demand` | `{demandId}` | 转发 `POST /api/v1/demands/:id/cancel`，返回 `{demand}` |
 | `complete_demand` | `{demandId}` | 转发 `POST /api/v1/demands/:id/complete`，返回 `{demand}`，释放活跃名额 |
 | `list_demand_revisions` | `{demandId}` | 转发 `GET /api/v1/demands/:id/revisions`，返回 `{revisions}` |
@@ -47,13 +53,33 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | `vote_room_retention` | `{roomId, keep: boolean}` | 转发 `POST /api/v1/rooms/:id/retention-vote`，返回 Hub 的投票结果 |
 | `notify` | `{title, body, demandId?, matchId?, roomId?}` | 显示轻通知。点击后优先打开 `roomId`，其次打开 `demandId` 详情，其余情况打开需求列表。未读数由 Hub 事件维护。返回 `{}` |
 | `sync_local_profile` | `{campus?, preferences?, bio?}` | 转发 `PUT /api/v1/profile/local`，返回 `{localProfile}` |
-| `get_profile` | `{}` | 转发 `GET /api/v1/profile`，返回 `{localProfile, cloudProfile}` |
+| `edit_profile_fields` | `{confirmed: true, mutationId, changes}` | 保存已确认的字段编辑。后台确认后返回 `{localProfile, fieldChanges}`。等待同步时，返回 `{profileEdit}` |
+| `get_profile` | `{}` | 读取后台资料并更新本机缓存。临时不可达时，已有的缓存附带 `profileSource: "cache"` |
+| `set_modeling_consent` | `{confirmed: true, source, enabled, baseRevision}` | 转发 `PATCH /api/v1/profile/modeling`，返回 `{consent, profile, revokedDemandIds?}` 并更新本机确认缓存 |
+| `profile_sync_status` | `{}` | 返回当前账号本机的 `{memberId, confirmedProfileCached, draft, edits}`，离线可用 |
+| `save_profile_draft` | `{changes}` | 保存未确认草稿，返回 `{status: "draft"}` |
+| `discard_profile_draft` | `{}` | 清除当前账号的草稿，返回 `{status: "discarded"}` |
+| `discard_failed_profile_edit` | `{mutationId}` | 移除已被后台拒绝的本机编辑记录，返回 `{status: "discarded"}` |
 
 `unreadByDemand` 以需求 ID 为键，值为 `{responseCount, roomMessageCount}`。`unreadByRoom` 以群聊 ID 为键，值为群消息未读数。`unreadCount` 等于所有 `responseCount` 加上所有群消息未读数。
 
 脚本新增 `complete-demand --id …`、`list-responses --demand-id …` 和 `vote-retention --room-id … --keep|--no-keep`。`notify` 和 `open-room` 接受可选的 `--demand-id`。
 
 使用 `update-demand --confirmed --id …` 修改现有需求，可用 `--change-note` 记录说明。`--start` 和 `--end` 成对传入并打包为 `timeWindow`。`--party-min` 和 `--party-max` 打包为 `partySize`，沿用 `submit-demand` 的缺省规则。使用 `list-revisions --demand-id …` 查询版本历史。
+
+用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，例如 `--profile-field preferences.food=2`，版本取自确认时 `get-profile` 的 `localProfile.fieldVersions[字段名].version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上该次联网读取的 `cloudProfile.inferenceVersion` 作为 `--cloud-version`。用 `get-demand --id …` 查询原需求及其授权状态。
+
+长期建模用 `set-modeling-consent --confirmed --source demands|interactions --enable|--disable --base-revision …`。先读取该来源的 `modeling[来源].revision`，按成员明确确认的设置提交。单次匹配回执不会改变长期授权。推断标签及依据取自 `get-profile` 的 `cloudProfile.inferences`，纠正和停用在托盘资料页操作。
+
+关闭来源的回执可能包含 `revokedDemandIds`，即依赖该来源并被停止的在途需求。其他设备收到 `profile.modeling.revoked` 后按来源版本清除本机的相关推断，并从 `demand.updated` 更新需求状态。旧版本事件保持当前缓存的较新版本。
+
+`submission` 包含 `idempotencyKey`、`title`、`expiresAt`、`status` 和可选错误消息 `error`。状态为 `pending`、`withdrawing`、`expired`、`failed` 或 `withdrawal_failed`。离线队列随托盘重启保留，按俱乐部地址和账号隔离。过期确认单停止提交。`list-submissions` 查看状态，`withdraw-submission --idempotency-key …` 撤回仍未收到需求 ID 的提交。
+
+`sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。
+
+多设备编辑使用 `sync-profile-fields --confirmed --mutation-id … --changes-json …`。`changes` 按字段名填写 `{baseRevision, value}`。从 `localProfile.fieldVersions` 读取当前版本，版本缺省时用 `0`，删除时用 `value: null`。遇到 `profile_conflict` 时重新读取资料，将当前值和拟修改值交给成员选择。提交超时保留原编号和原字段编辑重试。
+
+`save-profile-draft --changes-json …` 和 `discard-profile-draft` 只读写本机。确认提交与草稿内容一致的编辑后，草稿转入待同步队列。`profile-sync-status` 中的 `edits` 包含原 `mutationId`、`changes`、`status` 和 `error`，状态为 `pending`、`conflict` 或 `failed`。重连后先处理撤回和删除，再提交其余编辑。只有后台确认的值才会进入缓存。可以用 `discard-failed-profile-edit --mutation-id …` 移除失败记录。
 
 ## 4. 程序驱动 vs LLM 驱动配合规则
 

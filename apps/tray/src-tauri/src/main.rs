@@ -1,12 +1,16 @@
 mod api;
 mod bridge;
 mod hub;
+mod outbox;
+mod profile_cache;
 mod session;
 
 use api::{Api, ApiResult, Failure};
 use hub::{Bootstrap, Hub, Update, View};
+use outbox::Outbox;
 use session::{Member, SessionStore};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "macos"))]
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
@@ -25,11 +29,15 @@ struct TraySettings {
     title: String,
     window_offset_x: Option<i32>,
     email_domains: Vec<String>,
+    path: PathBuf,
+    do_not_disturb: Mutex<bool>,
 }
 
 impl TraySettings {
-    fn from_env() -> Self {
-        Self {
+    fn from_env(dir: &Path) -> std::io::Result<Self> {
+        let path = dir.join("do-not-disturb.json");
+        let do_not_disturb = session::read_private_json(&path)?.unwrap_or(false);
+        Ok(Self {
             title: std::env::var("MILKBIRD_TRAY_TITLE").unwrap_or_else(|_| TRAY_ID.into()),
             window_offset_x: std::env::var("MILKBIRD_WINDOW_OFFSET_X")
                 .ok()
@@ -37,7 +45,20 @@ impl TraySettings {
             email_domains: login_domains(
                 &std::env::var("MILKBIRD_ALLOWED_EMAIL_DOMAINS").unwrap_or_default(),
             ),
-        }
+            path,
+            do_not_disturb: Mutex::new(do_not_disturb),
+        })
+    }
+
+    fn is_quiet(&self) -> bool {
+        *self.do_not_disturb.lock().expect("tray notification setting")
+    }
+
+    fn set_do_not_disturb(&self, enabled: bool) -> std::io::Result<()> {
+        let mut setting = self.do_not_disturb.lock().expect("tray notification setting");
+        session::write_private_json(&self.path, &enabled)?;
+        *setting = enabled;
+        Ok(())
     }
 }
 
@@ -76,9 +97,35 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| Failure::new("internal_error", "托盘暂时无法处理此请求。"))?
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayBootstrap {
+    #[serde(flatten)]
+    hub: Bootstrap,
+    do_not_disturb: bool,
+}
+
 #[tauri::command]
-fn get_bootstrap(state: State<'_, Arc<Hub>>) -> Bootstrap {
-    state.bootstrap()
+fn get_bootstrap(state: State<'_, Arc<Hub>>, settings: State<'_, TraySettings>) -> TrayBootstrap {
+    TrayBootstrap {
+        hub: state.bootstrap(),
+        do_not_disturb: settings.is_quiet(),
+    }
+}
+
+#[tauri::command]
+fn set_do_not_disturb(
+    app: AppHandle,
+    settings: State<'_, TraySettings>,
+    enabled: bool,
+) -> ApiResult<()> {
+    settings
+        .set_do_not_disturb(enabled)
+        .map_err(|_| Failure::new("notification_settings_io", "无法保存本机免打扰设置。"))?;
+    if enabled && let Some(toast) = app.get_webview_window("toast") {
+        let _ = toast.hide();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -128,6 +175,40 @@ async fn cancel_demand(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResu
 }
 
 #[tauri::command]
+async fn rank_demand(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
+    blocking(state, move |hub| {
+        hub.with_api(|api, token| api.rank_demand(token, &demand_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_recommendation(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
+    blocking(state, move |hub| {
+        hub.with_api(|api, token| api.get_recommendation(token, &demand_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn recheck_recommendation(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
+    blocking(state, move |hub| {
+        hub.with_api(|api, token| api.recheck_recommendation(token, &demand_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_submissions(state: State<'_, Arc<Hub>>) -> ApiResult {
+    blocking(state, Hub::list_submissions).await
+}
+
+#[tauri::command]
+async fn withdraw_submission(state: State<'_, Arc<Hub>>, idempotency_key: String) -> ApiResult {
+    blocking(state, move |hub| hub.withdraw_submission(&idempotency_key)).await
+}
+
+#[tauri::command]
 async fn list_demand_revisions(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
     blocking(state, move |hub| {
         hub.with_api(|api, token| api.list_demand_revisions(token, &demand_id))
@@ -148,9 +229,10 @@ async fn feedback_response(
     state: State<'_, Arc<Hub>>,
     response_id: String,
     feedback: String,
+    expected_updated_at: Option<String>,
 ) -> ApiResult {
     blocking(state, move |hub| {
-        hub.feedback_response(&response_id, &feedback)
+        hub.feedback_response(&response_id, &feedback, expected_updated_at.as_deref())
     })
     .await
 }
@@ -214,7 +296,60 @@ async fn leave_room(state: State<'_, Arc<Hub>>, room_id: String) -> ApiResult {
 
 #[tauri::command]
 async fn get_profile(state: State<'_, Arc<Hub>>) -> ApiResult {
-    blocking(state, |hub| hub.with_api(Api::get_profile)).await
+    blocking(state, Hub::get_profile).await
+}
+
+#[tauri::command]
+async fn set_modeling_consent(
+    state: State<'_, Arc<Hub>>,
+    confirmed: bool,
+    source: String,
+    enabled: bool,
+    base_revision: u64,
+) -> ApiResult {
+    if !confirmed {
+        return Err(Failure::confirmation_required());
+    }
+    blocking(state, move |hub| {
+        hub.set_modeling_consent(&serde_json::json!({
+            "source": source, "enabled": enabled, "baseRevision": base_revision,
+        }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_inference_control(
+    state: State<'_, Arc<Hub>>,
+    confirmed: bool,
+    tag: String,
+    action: String,
+    base_revision: u64,
+) -> ApiResult {
+    if !confirmed {
+        return Err(Failure::confirmation_required());
+    }
+    blocking(state, move |hub| {
+        hub.set_inference_control(&serde_json::json!({
+            "tag": tag, "action": action, "baseRevision": base_revision,
+        }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn profile_sync_status(state: State<'_, Arc<Hub>>) -> ApiResult {
+    blocking(state, Hub::profile_sync_status).await
+}
+
+#[tauri::command]
+async fn discard_profile_draft(state: State<'_, Arc<Hub>>) -> ApiResult {
+    blocking(state, Hub::discard_profile_draft).await
+}
+
+#[tauri::command]
+async fn discard_failed_profile_edit(state: State<'_, Arc<Hub>>, mutation_id: String) -> ApiResult {
+    blocking(state, move |hub| hub.discard_failed_profile_edit(&mutation_id)).await
 }
 
 #[tauri::command]
@@ -408,8 +543,9 @@ fn show_main(app: &AppHandle) {
 
 fn apply_update(app: &AppHandle, update: Update) {
     let state = app.state::<Arc<Hub>>().bootstrap();
+    let settings = app.state::<TraySettings>();
+    let quiet = settings.is_quiet();
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let settings = app.state::<TraySettings>();
         let title = &settings.title;
         let title = if state.unread_count == 0 {
             title.clone()
@@ -423,7 +559,7 @@ fn apply_update(app: &AppHandle, update: Update) {
         .is_some_and(|window| window.is_visible().unwrap_or(false));
     if update.show_main {
         show_main(app);
-    } else if main_visible || state.notice.is_none() {
+    } else if quiet || main_visible || state.notice.is_none() {
         if let Some(toast) = app.get_webview_window("toast") {
             let _ = toast.hide();
         }
@@ -431,7 +567,7 @@ fn apply_update(app: &AppHandle, update: Update) {
         show_window(app, "toast", false);
     }
     let _ = app.emit_to("main", "hub-event", &update);
-    if update.new_notice {
+    if update.new_notice && !quiet {
         let _ = app.emit_to("toast", "hub-event", &update);
     }
 }
@@ -441,12 +577,18 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
             get_login_domains,
+            set_do_not_disturb,
             request_email_code,
             verify_email_code,
             logout,
             list_demands,
             complete_demand,
             cancel_demand,
+            rank_demand,
+            get_recommendation,
+            recheck_recommendation,
+            list_submissions,
+            withdraw_submission,
             list_demand_revisions,
             list_demand_responses,
             feedback_response,
@@ -459,6 +601,11 @@ fn main() {
             vote_room_retention,
             leave_room,
             get_profile,
+            set_modeling_consent,
+            set_inference_control,
+            profile_sync_status,
+            discard_profile_draft,
+            discard_failed_profile_edit,
             mark_demand_read,
             mark_room_read,
             clear_unread,
@@ -468,7 +615,9 @@ fn main() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
-            let settings = TraySettings::from_env();
+            let dir = session::directory()?;
+            let bridge = bridge::Bridge::bind(&dir)?;
+            let settings = TraySettings::from_env(&dir)?;
             let show = MenuItem::with_id(app, "show", "打开奶鸟俱乐部", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出奶鸟俱乐部", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -506,12 +655,11 @@ fn main() {
             app.manage(settings);
             tray.build(app)?;
 
-            let dir = session::directory()?;
-            let bridge = bridge::Bridge::bind(&dir)?;
             let handle = app.handle().clone();
             let hub = Arc::new(Hub::new(
                 Api::from_env()?,
                 SessionStore::open(&dir)?,
+                Outbox::open(&dir)?,
                 move |update| {
                     let handle = handle.clone();
                     let _ = handle
@@ -547,7 +695,20 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{login_domains, main_window_x, toast_window_pos};
+    use super::{TraySettings, login_domains, main_window_x, toast_window_pos};
+    use crate::session::tests::TestDir;
+
+    #[test]
+    fn quiet_time_is_local_to_the_device_and_survives_reopen() {
+        let dir = TestDir::new();
+        let settings = TraySettings::from_env(dir.path()).unwrap();
+        assert!(!settings.is_quiet());
+        settings.set_do_not_disturb(true).unwrap();
+        let reopened = TraySettings::from_env(dir.path()).unwrap();
+        assert!(reopened.is_quiet());
+        reopened.set_do_not_disturb(false).unwrap();
+        assert!(!TraySettings::from_env(dir.path()).unwrap().is_quiet());
+    }
 
     #[test]
     fn login_domains_normalize_validate_and_preserve_order() {

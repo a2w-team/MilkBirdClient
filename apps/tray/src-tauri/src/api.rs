@@ -20,12 +20,14 @@ fn next_client_msg_id() -> String {
     format!("tray-{nanos}-{seq}")
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Failure {
     pub code: String,
     pub message: String,
     #[serde(skip)]
     pub unauthorized: bool,
+    #[serde(skip)]
+    pub retryable: bool,
 }
 
 impl Failure {
@@ -34,6 +36,7 @@ impl Failure {
             code: code.into(),
             message: message.into(),
             unauthorized: false,
+            retryable: false,
         }
     }
 
@@ -65,6 +68,31 @@ impl Failure {
                 "最多可同时挂起 3 个需求，请先完成或撤回一个需求。"
             }
             (StatusCode::CONFLICT, "room_expired") => "这个临时群已到期。",
+            (StatusCode::CONFLICT, "demand_not_open") => "这条需求已结束，无法继续接收回应。",
+            (StatusCode::CONFLICT, "match_authorization_required" | "matching_authorization_required") => {
+                "请先确认本次匹配授权。"
+            }
+            (StatusCode::BAD_REQUEST, "invalid_ranking_constraints") => {
+                "预算上限须为非负整数人民币分。"
+            }
+            (StatusCode::CONFLICT, "demand_submission_withdrawn") => {
+                "这次提交已撤回，请重新确认后发起新需求。"
+            }
+            (StatusCode::CONFLICT, "match_profile_changed") => {
+                "画像已更新，请重新确认本次共享字段。"
+            }
+            (StatusCode::CONFLICT, "profile_conflict") => {
+                "资料已更新，请比较当前值和你的编辑后选择。"
+            }
+            (StatusCode::CONFLICT, "modeling_consent_changed") => "建模授权已更新，请刷新后确认。",
+            (StatusCode::CONFLICT, "inference_control_changed") => "推断设置已更新，请刷新后确认。",
+            (StatusCode::CONFLICT, "inference_expires_before_demand") => {
+                "选中的推断早于需求截止。请确认新的截止时间或共享范围。"
+            }
+            (StatusCode::CONFLICT, "response_feedback_changed") => "回应反馈已更新，请刷新后再操作。",
+            (StatusCode::CONFLICT, "idempotency_conflict") => {
+                "这次提交与原确认单不同，请重新确认后提交。"
+            }
             _ => message,
         };
         let mut failure = Failure::new(
@@ -76,6 +104,7 @@ impl Failure {
                 .unwrap_or(message),
         );
         failure.unauthorized = status == StatusCode::UNAUTHORIZED;
+        failure.retryable = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
         failure
     }
 
@@ -121,8 +150,10 @@ pub struct Event {
 }
 
 #[derive(Deserialize)]
-struct EventBatch {
-    events: Vec<Event>,
+pub struct EventBatch {
+    pub events: Vec<Event>,
+    #[serde(rename = "lastSeq")]
+    pub last_seq: u64,
 }
 
 impl Api {
@@ -182,9 +213,11 @@ impl Api {
         } else {
             request
         };
-        let response = request
-            .send()
-            .map_err(|_| Failure::new("server_unavailable", "暂时无法连接俱乐部，请稍后重试。"))?;
+        let response = request.send().map_err(|_| {
+            let mut error = Failure::new("server_unavailable", "暂时无法连接俱乐部，请稍后重试。");
+            error.retryable = true;
+            error
+        })?;
         let status = response.status();
         let mut bytes = Vec::new();
         let read = response.take(MAX_RESPONSE + 1).read_to_end(&mut bytes);
@@ -272,6 +305,15 @@ impl Api {
         self.write(Method::POST, &["demands"], Some(body), Some(token))
     }
 
+    pub fn withdraw_submission(&self, token: &str, key: &str) -> ApiResult {
+        self.write(
+            Method::POST,
+            &["demands", "withdraw-submission"],
+            Some(&json!({ "idempotencyKey": key })),
+            Some(token),
+        )
+    }
+
     pub fn update_demand(&self, token: &str, id: &str, body: &Value) -> ApiResult {
         self.write(Method::PATCH, &["demands", id], Some(body), Some(token))
     }
@@ -286,6 +328,27 @@ impl Api {
             &["demands"],
             query.as_ref().map_or(&[], |query| query.as_slice()),
             token,
+        )
+    }
+
+    pub fn get_demand(&self, token: &str, id: &str) -> ApiResult {
+        self.get(&["demands", id], &[], token)
+    }
+
+    pub fn rank_demand(&self, token: &str, id: &str) -> ApiResult {
+        self.get(&["demands", id, "candidates"], &[], token)
+    }
+
+    pub fn get_recommendation(&self, token: &str, id: &str) -> ApiResult {
+        self.get(&["demands", id, "recommendation"], &[], token)
+    }
+
+    pub fn recheck_recommendation(&self, token: &str, id: &str) -> ApiResult {
+        self.write(
+            Method::POST,
+            &["demands", id, "recommendation", "recheck"],
+            None,
+            Some(token),
         )
     }
 
@@ -306,11 +369,21 @@ impl Api {
         self.get(&["demands", demand_id, "responses"], &[], token)
     }
 
-    pub fn feedback_response(&self, token: &str, response_id: &str, feedback: &str) -> ApiResult {
+    pub fn feedback_response(
+        &self,
+        token: &str,
+        response_id: &str,
+        feedback: &str,
+        expected_updated_at: Option<&str>,
+    ) -> ApiResult {
+        let mut body = json!({ "feedback": feedback });
+        if let Some(stamp) = expected_updated_at {
+            body["expectedUpdatedAt"] = json!(stamp);
+        }
         self.write(
             Method::POST,
             &["responses", response_id, "feedback"],
-            Some(&json!({ "feedback": feedback })),
+            Some(&body),
             Some(token),
         )
     }
@@ -328,13 +401,11 @@ impl Api {
         )
     }
 
-    pub fn events(&self, token: &str, after: u64) -> ApiResult<Vec<Event>> {
+    pub fn events(&self, token: &str, after: u64) -> ApiResult<EventBatch> {
         let url = self.url(&["events"])?;
         let request = self.long.get(url).query(&[("after", after), ("wait", 25)]);
         let result = Self::send(request, Some(token))?;
-        let batch: EventBatch =
-            serde_json::from_value(result).map_err(|_| Failure::invalid_response())?;
-        Ok(batch.events)
+        serde_json::from_value(result).map_err(|_| Failure::invalid_response())
     }
 
     pub fn list_rooms(&self, token: &str) -> ApiResult {
@@ -375,8 +446,20 @@ impl Api {
         self.write(Method::PUT, &["profile", "local"], Some(body), Some(token))
     }
 
+    pub fn edit_profile_fields(&self, token: &str, body: &Value) -> ApiResult {
+        self.write(Method::PATCH, &["profile", "local"], Some(body), Some(token))
+    }
+
     pub fn get_profile(&self, token: &str) -> ApiResult {
         self.get(&["profile"], &[], token)
+    }
+
+    pub fn set_modeling_consent(&self, token: &str, body: &Value) -> ApiResult {
+        self.write(Method::PATCH, &["profile", "modeling"], Some(body), Some(token))
+    }
+
+    pub fn set_inference_control(&self, token: &str, body: &Value) -> ApiResult {
+        self.write(Method::PATCH, &["profile", "inferences"], Some(body), Some(token))
     }
 }
 
@@ -412,6 +495,13 @@ mod tests {
             "http://127.0.0.1:8080/api/v1/rooms/a%2Fb%3Fc/messages"
         );
         assert!(api.url(&["rooms", "..", "messages"]).is_err());
+    }
+
+    #[test]
+    fn event_batch_preserves_cursor_after_suppressed_deliveries() {
+        let batch: EventBatch = serde_json::from_str(r#"{"events":[],"lastSeq":42}"#).unwrap();
+        assert!(batch.events.is_empty());
+        assert_eq!(batch.last_seq, 42);
     }
 
     #[test]

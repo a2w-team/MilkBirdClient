@@ -775,6 +775,24 @@ button.ver-btn[aria-expanded="true"] {
 .spec-k { width: 52px; flex-shrink: 0; color: var(--muted); }
 .spec-v { flex: 1; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
 
+.profile-card h3, .profile-dialog h3 { font-size: 14px; }
+.profile-card .spec-row { align-items: flex-start; }
+.profile-card .spec-k { width: 68px; overflow-wrap: anywhere; }
+.profile-inferences { display: flex; flex-direction: column; margin-top: 8px; }
+.inference-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.inference-sources { margin-top: 4px; }
+.inference-sources ul { margin: 4px 0; padding-left: 16px; color: var(--muted); }
+.profile-notifications { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.profile-notifications input { flex: none; width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--accent); }
+
+.recommendation-panel h3 { margin: 0 0 6px; font-size: 14px; }
+.recommendation-panel .card-actions { flex-wrap: wrap; }
+.recommendation-panel .spec-v > * { margin: 3px 0; }
+.recommendation-panel .spec-v ul { padding-left: 16px; }
+.profile-dialog { width: min(340px, calc(100% - 28px)); padding: 16px; color: var(--ink); }
+.profile-dialog p { margin: 8px 0 14px; color: var(--ink-2); }
+.profile-dialog::backdrop { background: rgba(17, 24, 39, .35); }
+
 /* Response & Invite & Room Cards */
 .card {
   width: 100%;
