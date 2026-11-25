@@ -22,7 +22,9 @@
 
 ## 本地开发与构建
 
-在 macOS 上需准备 **Rust 1.90+**、**pnpm** 和 **Python 3**。校园邮箱默认支持 `hkust-gz.edu.cn` 后缀。启动开发版托盘前，可用 `MILKBIRD_API_ORIGIN` 指定奶鸟俱乐部后端地址（默认 `http://127.0.0.1:8080`）。
+在 macOS 上需准备 **Rust 1.90+**、**pnpm** 和 **Python 3**。登录时填写校园邮箱 `@` 前的部分，再从下拉框选后缀。托盘默认提供 `hkust-gz.edu.cn` 和 `connect.hkust-gz.edu.cn`。连接自定义 Hub 时，可在启动托盘前用 `MILKBIRD_ALLOWED_EMAIL_DOMAINS` 设置逗号分隔的下拉选项，Hub 负责最终校验。
+
+启动开发版托盘前，可用 `MILKBIRD_API_ORIGIN` 指定奶鸟俱乐部后端地址（默认 `http://127.0.0.1:8080`）。
 
 ```sh
 cargo run --locked --manifest-path apps/tray/src-tauri/Cargo.toml
@@ -34,6 +36,21 @@ cargo run --locked --manifest-path apps/tray/src-tauri/Cargo.toml
 cd apps/tray
 pnpm dlx @tauri-apps/cli@2.12.3 build --debug --bundles app -- --locked
 ```
+
+### 一键启动本地 Mock
+
+在仓库根目录运行，需要 **Python 3.10+** 和 Rust。
+
+```sh
+python3 apps/tray/dev/start_mock.py
+```
+
+首次运行会编译托盘。窗口打开后，填写任意邮箱名（如 `demo`），任选一个后缀，点击「获取验证码」并填入 `123456`。菜单栏中的 `a2w Mock` 是演示实例。
+
+- 打开「今晚南门约火锅」查看三种回应卡片并提交反馈，点击版本号查看修改历史。
+- 打开「周末双打缺一位搭档」试用匹配邀请，或进入「找同学一起复习概率论」的群聊发消息、投票保留。
+
+Mock 使用临时回环端口和独立的本机会话目录。按终端的 `Ctrl+C` 或从托盘菜单退出后会清理演示环境，下次启动恢复示例数据。
 
 ## 验证命令
 

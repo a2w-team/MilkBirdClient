@@ -23,12 +23,14 @@ use tauri::{
 };
 
 const TRAY_ID: &str = "a2w";
+const DEFAULT_EMAIL_DOMAINS: &str = "hkust-gz.edu.cn,connect.hkust-gz.edu.cn";
 
 struct TraySettings {
     title: String,
     window_offset_x: Option<i32>,
     path: PathBuf,
     do_not_disturb: Mutex<bool>,
+    email_domains: Vec<String>,
 }
 
 impl TraySettings {
@@ -42,6 +44,9 @@ impl TraySettings {
                 .and_then(|offset| offset.trim().parse().ok()),
             path,
             do_not_disturb: Mutex::new(do_not_disturb),
+            email_domains: login_domains(
+                &std::env::var("MILKBIRD_ALLOWED_EMAIL_DOMAINS").unwrap_or_default(),
+            ),
         })
     }
 
@@ -55,6 +60,31 @@ impl TraySettings {
         *setting = enabled;
         Ok(())
     }
+}
+
+fn login_domains(config: &str) -> Vec<String> {
+    let mut domains = Vec::new();
+    for domain in config.split(',') {
+        let domain = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+        if domain.len() <= 253
+            && domain.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+            && !domains.contains(&domain)
+        {
+            domains.push(domain);
+        }
+    }
+    if domains.is_empty() {
+        domains.extend(DEFAULT_EMAIL_DOMAINS.split(',').map(str::to_owned));
+    }
+    domains
 }
 
 async fn blocking<T: Send + 'static>(
@@ -96,6 +126,11 @@ fn set_do_not_disturb(
         let _ = toast.hide();
     }
     Ok(())
+}
+
+#[tauri::command]
+fn get_login_domains(settings: State<'_, TraySettings>) -> Vec<String> {
+    settings.email_domains.clone()
 }
 
 #[tauri::command]
@@ -518,6 +553,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
             set_do_not_disturb,
+            get_login_domains,
             request_email_code,
             verify_email_code,
             logout,
@@ -631,7 +667,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{TraySettings, main_window_x, toast_window_pos};
+    use super::{TraySettings, login_domains, main_window_x, toast_window_pos};
     use crate::session::tests::TestDir;
 
     #[test]
@@ -644,6 +680,18 @@ mod tests {
         assert!(reopened.is_quiet());
         reopened.set_do_not_disturb(false).unwrap();
         assert!(!TraySettings::from_env(dir.path()).unwrap().is_quiet());
+    }
+
+    #[test]
+    fn login_domains_normalize_validate_and_preserve_order() {
+        assert_eq!(
+            login_domains(" .EXAMPLE.EDU , campus.example.edu, example.edu, -, foo..edu, @foo.edu"),
+            ["example.edu", "campus.example.edu"]
+        );
+        assert_eq!(
+            login_domains(" , https://example.edu"),
+            ["hkust-gz.edu.cn", "connect.hkust-gz.edu.cn"]
+        );
     }
 
     #[test]

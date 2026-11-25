@@ -48,7 +48,9 @@ function report(error) {
   const codeMap = {
     active_demand_limit_reached: '最多同时挂起 3 个需求',
     room_expired: '群聊已满 24 小时，投票保留后可继续发言',
-    demand_not_editable: '当前需求不可修改'
+    demand_not_editable: '当前需求不可修改',
+    invalid_campus_email: '该校园邮箱无法使用，请检查邮箱名和后缀',
+    invalid_or_expired_code: '验证码无效或已过期，请检查或重新获取'
   }
   feedback(codeMap[error?.code] || error?.message || '操作失败，请重试', true)
 }
@@ -944,7 +946,7 @@ async function sync(update, force = false) {
     selectedRoomId = null
     revisionsOpen = false
     $('login-form').reset()
-    $('login-hint').hidden = true
+    clearLoginCode()
     feedback()
   }
   if (!next.loggedIn) {
@@ -1077,28 +1079,81 @@ $('leave-room').addEventListener('click', () => act($('leave-room'), async () =>
   }
 }))
 
-$('request-code').addEventListener('click', () => {
-  const email = $('email')
-  if (!email.reportValidity()) return
-  act($('request-code'), async () => {
-    const result = await invoke('request_email_code', { email: email.value })
-    const hint = $('login-hint')
-    hint.textContent = result.devCode ? '测试码 ' + result.devCode : '验证码已发送'
-    hint.hidden = false
-    $('code').focus()
+function clearLoginCode() {
+  $('code').value = ''
+  $('login-hint').textContent = ''
+  $('request-code').textContent = '获取验证码'
+}
+
+function loginEmail() {
+  const input = $('email')
+  input.value = input.value.trim()
+  const email = `${input.value}@${$('email-domain').value}`
+  const validator = document.createElement('input')
+  validator.type = 'email'
+  validator.value = email
+  input.setCustomValidity(input.value && !validator.validity.valid ? '请输入 @ 前的邮箱名' : '')
+  return input.reportValidity() ? email.toLowerCase() : null
+}
+
+async function loginAction(button, pendingLabel, work) {
+  const fields = $('login-fields')
+  if (fields.disabled) return false
+  const label = button.textContent
+  fields.disabled = true
+  button.textContent = pendingLabel
+  feedback()
+  try {
+    await work()
+    return true
+  } catch (error) {
+    report(error)
+    return false
+  } finally {
+    fields.disabled = false
+    button.textContent = label
+  }
+}
+
+function loginAddressChanged() {
+  $('email').setCustomValidity('')
+  clearLoginCode()
+  feedback()
+}
+
+$('email').addEventListener('input', loginAddressChanged)
+$('email-domain').addEventListener('change', loginAddressChanged)
+
+$('request-code').addEventListener('click', async () => {
+  const email = loginEmail()
+  if (!email) return
+  const button = $('request-code')
+  const sent = await loginAction(button, '发送中…', async () => {
+    const { devCode } = await invoke('request_email_code', { email })
+    $('code').value = ''
+    $('login-hint').textContent = devCode ? `测试验证码 ${devCode}` : '验证码已发送，请查收邮箱'
   })
+  if (sent) {
+    button.textContent = '重新发送'
+    $('code').focus()
+  } else {
+    button.focus()
+  }
 })
 
-$('login-form').addEventListener('submit', event => {
+$('login-form').addEventListener('submit', async event => {
   event.preventDefault()
-  act($('sign-in'), async () => {
+  const email = loginEmail()
+  if (!email) return
+  const signedIn = await loginAction($('sign-in'), '登录中…', async () => {
     await invoke('verify_email_code', {
-      email: $('email').value,
+      email,
       code: $('code').value,
       displayName: $('display-name').value
     })
     await sync(undefined, true)
   })
+  if (!signedIn) $('code').focus()
 })
 
 $('logout').addEventListener('click', () => act($('logout'), async () => {
@@ -1130,5 +1185,12 @@ $('copy-cmd').addEventListener('click', () => {
 $('close-window').addEventListener('click', () => appWindow.close().catch(report))
 
 listen('hub-event', ({ payload }) => sync(payload).catch(report))
-  .then(() => sync(undefined, true))
+  .then(async () => {
+    const domains = await invoke('get_login_domains')
+    const options = domains.map(domain => new Option('@' + domain, domain))
+    options[0].defaultSelected = true
+    $('email-domain').replaceChildren(...options)
+    $('login-fields').disabled = false
+    await sync(undefined, true)
+  })
   .catch(report)

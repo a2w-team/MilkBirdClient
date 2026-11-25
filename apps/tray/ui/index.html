@@ -45,26 +45,35 @@
 
     <main id="login" class="login" hidden>
       <div class="login-card">
-        <span class="pill accent">HKUST-GZ</span>
-        <h2>登录 a2w</h2>
+        <div class="login-heading">
+          <h2>登录奶鸟俱乐部</h2>
+          <p>使用校园邮箱获取验证码</p>
+        </div>
         <form id="login-form" class="login-form">
-          <div class="field">
-            <label for="email">校园邮箱</label>
-            <div class="row">
-              <input id="email" type="email" autocomplete="email" placeholder="name@hkust-gz.edu.cn" required>
-              <button id="request-code" type="button" class="btn">获取验证码</button>
+          <fieldset id="login-fields" disabled>
+            <legend class="visually-hidden">校园邮箱登录</legend>
+            <div class="field">
+              <label for="email">校园邮箱名</label>
+              <div class="email-field">
+                <input id="email" type="text" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="@ 前的部分" required>
+                <label for="email-domain" class="visually-hidden">邮箱后缀</label>
+                <select id="email-domain" required></select>
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <label for="code">验证码</label>
-            <input id="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字" required>
-          </div>
-          <div class="field">
-            <label for="display-name">昵称</label>
-            <input id="display-name" type="text" autocomplete="nickname" placeholder="选填">
-          </div>
-          <button id="sign-in" class="btn primary full-width" type="submit">进入</button>
-          <p id="login-hint" class="dev-hint" role="status" hidden></p>
+            <div class="field">
+              <label for="code">验证码</label>
+              <div class="row">
+                <input id="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6 位数字" required>
+                <button id="request-code" type="button" class="btn">获取验证码</button>
+              </div>
+            </div>
+            <p id="login-hint" class="dev-hint" role="status"></p>
+            <div class="field">
+              <label for="display-name">昵称</label>
+              <input id="display-name" type="text" autocomplete="nickname" placeholder="选填">
+            </div>
+            <button id="sign-in" class="btn primary full-width" type="submit">登录</button>
+          </fieldset>
         </form>
       </div>
     </main>
