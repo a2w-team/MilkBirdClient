@@ -33,7 +33,9 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | Action | Payload 关键字段 | 行为与返回 `data` |
 |---|---|---|
 | `status` | `{}` | 返回 `{loggedIn, member, apiOrigin, unreadCount, unreadByDemand, unreadByRoom}`；不需要登录 |
-| `submit_demand` | `{confirmed: true, idempotencyKey, category, title, summary?, campus, location?, timeWindow?, partySize?, preferences?, expiresAt?, matchAuthorization?}` | 校验 `confirmed == true` 和已登录；转发 `POST /api/v1/demands`；更新托盘状态并返回 `{demand, matches}`；若立即命中匹配则触发托盘提醒 |
+| `submit_demand` | `{confirmed: true, idempotencyKey, category, title, summary?, campus, location?, timeWindow?, partySize?, preferences?, expiresAt?, matchAuthorization?}` | 登录并确认后保存原提交。后台确认时返回 `{demand, matches}`。临时不可达时返回 `{submission}`，托盘重连后用原键重发 |
+| `list_submissions` | `{}` | 返回当前账号在本机的 `{submissions}`，离线可用 |
+| `withdraw_submission` | `{idempotencyKey}` | 停止本机补发并用原键撤回。后台返回回执时返回 `{status: "withdrawn", demand}`。离线时返回 `{submission}`，可在重连后继续撤回。移除已经被拒绝的提交记录时返回 `{status: "discarded"}` |
 | `update_demand` | `{confirmed: true, demandId, title?, summary?, campus?, location?, timeWindow?, partySize?, preferences?, expiresAt?, changeNote?}` | 校验确认和登录；将变更字段转发至 `PATCH /api/v1/demands/:id`，返回 `{demand, matches}`。成功后刷新列表，有匹配时触发托盘提醒 |
 | `list_demands` | `{status?}` | 转发 `GET /api/v1/demands`，返回 `{demands}` |
 | `get_demand` | `{demandId}` | 转发 `GET /api/v1/demands/:id`，返回 `{demand}` 及其授权状态 |
@@ -58,6 +60,8 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 使用 `update-demand --confirmed --id …` 修改现有需求，可用 `--change-note` 记录说明。`--start` 和 `--end` 成对传入并打包为 `timeWindow`。`--party-min` 和 `--party-max` 打包为 `partySize`，沿用 `submit-demand` 的缺省规则。使用 `list-revisions --demand-id …` 查询版本历史。
 
 用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，例如 `--profile-field preferences.food=2`，版本取自确认时 `get-profile` 的 `localProfile.fieldVersions[字段名].version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上该次读取的 `cloudProfile.updatedAt` 作为 `--cloud-version`。用 `get-demand --id …` 查询原需求及其授权状态。
+
+`submission` 包含 `idempotencyKey`、`title`、`expiresAt`、`status` 和可选错误消息 `error`。状态为 `pending`、`withdrawing`、`expired`、`failed` 或 `withdrawal_failed`。离线队列随托盘重启保留，按俱乐部地址和账号隔离。过期确认单停止提交。`list-submissions` 查看状态，`withdraw-submission --idempotency-key …` 撤回仍未收到需求 ID 的提交。
 
 `sync-profile` 只提交本次确认保存的字段。`get-profile` 回执的 `localProfile.campus` 和 `campusVersion` 是后台的常驻校区及字段版本。
 

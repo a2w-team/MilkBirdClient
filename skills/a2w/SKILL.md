@@ -45,6 +45,12 @@ disable-model-invocation: true
 - 用 `get-demand --id …` 核对需求和授权。用户明确要求撤回时，用 `cancel-demand --id …`。已授权需求以回执的 `matchAuthorization.status` 为 `revoked` 为准，回执缺少授权状态时用 `get-demand` 复查。旧版无授权需求以 `demand.status` 为 `cancelled` 为准。
 - 条件变化时先检查原需求的授权。已绑定单次授权的需求需要用户确认撤回原请求，再按新确认单提交。旧版无授权需求可使用 `update-demand`。
 
+## 离线提交与撤回
+
+每次 `submit-demand` 后按回执汇报。回执含 `demand` 时，俱乐部已收到需求。只收到 `submission.status: pending` 时，告诉用户需求已在本机排队，托盘重连后自动提交。用 `list-submissions` 查看等待、失败或过期状态，用 `list-demands` 查看服务端确认的需求。过期后，经用户重新确认才能用新键提交。
+
+用户要求撤回，且手上只有排队回执时，用 `withdraw-submission --idempotency-key …`，沿用原提交的键并停止重提。返回 `withdrawing` 时说明本机已停止补发，服务端撤回尚待确认。返回 `withdrawn` 时按 `demand` 的实际状态汇报。若 `demand` 为 `null`，说明俱乐部已阻止这次提交创建需求。遇到 `withdrawal_failed` 时说明撤回尚未确认，并用原键重试撤回。
+
 ## 多设备资料编辑
 
 1. 运行 `get-profile`，只读取本次要保存或删除的俱乐部字段及其版本。每个字段从 `localProfile.fieldVersions` 取 `version`；从未写入的字段用 `0`。对于标记为 `deleted` 的字段，沿用删除后的版本，恢复值须由成员明确确认。

@@ -1,5 +1,6 @@
 use crate::api::{Api, ApiResult, Event, EventBatch, Failure};
-use crate::session::{Member, SessionStore};
+use crate::outbox::Outbox;
+use crate::session::{Member, Session, SessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -420,6 +421,7 @@ pub struct Update {
 pub struct Hub {
     api: Api,
     session: SessionStore,
+    outbox: Mutex<Outbox>,
     runtime: Mutex<Runtime>,
     changed: Condvar,
     publish: Box<dyn Fn(Update) + Send + Sync>,
@@ -429,11 +431,13 @@ impl Hub {
     pub fn new(
         api: Api,
         session: SessionStore,
+        outbox: Outbox,
         publish: impl Fn(Update) + Send + Sync + 'static,
     ) -> Self {
         Self {
             api,
             session,
+            outbox: Mutex::new(outbox),
             runtime: Mutex::default(),
             changed: Condvar::new(),
             publish: Box::new(publish),
@@ -541,12 +545,20 @@ impl Hub {
         call: impl FnOnce(&Api, &str) -> ApiResult<T>,
         effect: impl FnOnce(&mut Runtime, &T, &Member) -> Option<Update>,
     ) -> ApiResult<T> {
+        self.authenticated_session(|api, session| call(api, &session.token), effect)
+    }
+
+    fn authenticated_session<T>(
+        &self,
+        call: impl FnOnce(&Api, &Session) -> ApiResult<T>,
+        effect: impl FnOnce(&mut Runtime, &T, &Member) -> Option<Update>,
+    ) -> ApiResult<T> {
         let (generation, session) = {
             let runtime = self.runtime.lock().expect("hub state");
             let session = self.session.get().ok_or_else(Failure::login_required)?;
             (runtime.generation, session)
         };
-        let result = call(&self.api, &session.token);
+        let result = call(&self.api, &session);
         let mut runtime = self.runtime.lock().expect("hub state");
         if runtime.generation != generation {
             return Err(Failure::new("session_changed", "登录状态已变化。"));
@@ -570,18 +582,53 @@ impl Hub {
             .as_object_mut()
             .expect("confirmed field implies object")
             .remove("confirmed");
-        self.authenticated(
-            |api, token| {
-                let result = api.submit_demand(token, &payload)?;
-                let demand = result.get("demand").ok_or_else(Failure::invalid_response)?;
-                let matches = result["matches"].as_array().cloned().unwrap_or_default();
-                Ok(json!({ "demand": demand, "matches": matches }))
-            },
-            |runtime, value, member| {
-                let demand_id = string_field(&value["demand"], "id");
-                Some(Self::demand_saved(runtime, value, demand_id, member))
-            },
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(
+            |api, session| outbox.submit(api, session, payload),
+            |runtime, value, member| Some(Self::submission_update(runtime, value, member)),
         )
+    }
+
+    pub fn list_submissions(&self) -> ApiResult {
+        let outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(|api, session| Ok(outbox.list(api, session)), |_, _, _| None)
+    }
+
+    pub fn withdraw_submission(&self, key: &str) -> ApiResult {
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        self.authenticated_session(
+            |api, session| outbox.withdraw(api, session, key),
+            |runtime, value, member| Some(Self::submission_update(runtime, value, member)),
+        )
+    }
+
+    fn flush_submissions(&self) {
+        let mut outbox = self.outbox.lock().expect("demand outbox");
+        let _ = self.authenticated_session(
+            |api, session| outbox.flush(api, session),
+            |runtime, (changed, results), member| {
+                if !changed {
+                    return None;
+                }
+                let mut update = Update::default();
+                for value in results {
+                    let step = Self::submission_update(runtime, value, member);
+                    update.new_notice |= step.new_notice;
+                    update.refresh_lists |= step.refresh_lists;
+                }
+                Some(update)
+            },
+        );
+    }
+
+    fn submission_update(runtime: &mut Runtime, value: &Value, member: &Member) -> Update {
+        let Some(id) = string_field(&value["demand"], "id") else {
+            return Update::default();
+        };
+        if value["demand"]["status"] == "cancelled" {
+            runtime.clear_withdrawn_demand(&id);
+        }
+        Self::demand_saved(runtime, value, Some(id), member)
     }
 
     pub fn update_demand(&self, id: &str, mut payload: Value) -> ApiResult {
@@ -798,6 +845,7 @@ impl Hub {
                     continue;
                 }
             }
+            self.flush_submissions();
             let started = Instant::now();
             match self.api.events(&session.token, after) {
                 Ok(EventBatch {

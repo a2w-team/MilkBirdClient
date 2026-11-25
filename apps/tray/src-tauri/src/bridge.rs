@@ -59,6 +59,10 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
     match action {
         "status" => Ok(hub.status()),
         "submit_demand" => hub.submit_demand(payload),
+        "list_submissions" => hub.list_submissions(),
+        "withdraw_submission" => {
+            hub.withdraw_submission(required_string(&payload, "idempotencyKey")?)
+        }
         "update_demand" => {
             let demand_id = required_string(&payload, "demandId")?.to_owned();
             hub.update_demand(&demand_id, payload)
@@ -225,13 +229,16 @@ impl Bridge {
 mod tests {
     use super::*;
     use crate::api::Api;
+    use crate::outbox::Outbox;
     use crate::session::{SessionStore, tests::TestDir};
     use std::net::Shutdown;
 
     fn logged_out_hub(dir: &TestDir) -> Hub {
         let session = SessionStore::open(dir.path()).unwrap();
         let api = Api::new("http://127.0.0.1:1").unwrap();
-        Hub::new(api, session, |_| panic!("request cannot update UI"))
+        Hub::new(api, session, Outbox::open(dir.path()).unwrap(), |_| {
+            panic!("request cannot update UI")
+        })
     }
 
     fn reply(hub: &Hub, request: &[u8]) -> Value {

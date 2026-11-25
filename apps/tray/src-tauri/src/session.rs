@@ -91,33 +91,7 @@ impl SessionStore {
 
     pub fn set(&self, session: Session) -> io::Result<()> {
         let mut current = self.session.lock().expect("session store");
-        static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
-        let (temporary, mut file) = loop {
-            let sequence = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
-            let name = format!(".session-{}-{sequence}.tmp", std::process::id());
-            let temporary = self.path.with_file_name(name);
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)
-            {
-                Ok(file) => break (temporary, file),
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(err) => return Err(err),
-            }
-        };
-
-        let result = (|| {
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
-            serde_json::to_writer(&mut file, &session)?;
-            file.sync_all()?;
-            fs::rename(&temporary, &self.path)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(temporary);
-        }
-        result?;
+        write_private_json(&self.path, &session)?;
         *current = Some(session);
         Ok(())
     }
@@ -132,6 +106,36 @@ impl SessionStore {
         *current = None;
         Ok(())
     }
+}
+
+pub fn write_private_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+    let (temporary, mut file) = loop {
+        let sequence = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+        let name = format!(".tray-{}-{sequence}.tmp", std::process::id());
+        let temporary = path.with_file_name(name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    };
+
+    let result = (|| {
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        serde_json::to_writer(&mut file, value)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 #[cfg(test)]
