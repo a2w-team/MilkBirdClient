@@ -1,6 +1,6 @@
 use crate::api::{Api, ApiResult, Event, EventBatch, Failure};
 use crate::outbox::Outbox;
-use crate::session::{Member, Session, SessionStore};
+use crate::session::{Member, NotificationState, Session, SessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -34,6 +34,8 @@ pub struct Notice {
     body: String,
     #[serde(flatten)]
     target: Target,
+    #[serde(skip)]
+    room_ready_unread: bool,
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -56,6 +58,7 @@ struct Runtime {
     target: Target,
     navigation_id: u64,
     seen_notices: HashSet<(String, String)>,
+    notification_state_dirty: bool,
 }
 
 impl Runtime {
@@ -66,6 +69,49 @@ impl Runtime {
             navigation_id: self.navigation_id + 1,
             ..Self::default()
         };
+    }
+
+    fn restore_notification_state(&mut self, state: NotificationState) {
+        self.last_seq = state.last_seq;
+        self.unread_by_demand = state
+            .demand_response_unread
+            .into_iter()
+            .map(|(id, response_count)| {
+                (
+                    id,
+                    DemandUnread {
+                        response_count,
+                        room_message_count: 0,
+                    },
+                )
+            })
+            .collect();
+        self.unread_by_room = state.unread_by_room;
+        self.room_to_demand = state.room_to_demand;
+        self.seen_notices = state.seen_notices;
+        for (room_id, count) in &self.unread_by_room {
+            if let Some(demand_id) = self.room_to_demand.get(room_id) {
+                self.unread_by_demand
+                    .entry(demand_id.clone())
+                    .or_default()
+                    .room_message_count += count;
+            }
+        }
+    }
+
+    fn notification_state(&self) -> NotificationState {
+        NotificationState {
+            last_seq: self.last_seq,
+            demand_response_unread: self
+                .unread_by_demand
+                .iter()
+                .filter(|(_, unread)| unread.response_count != 0)
+                .map(|(id, unread)| (id.clone(), unread.response_count))
+                .collect(),
+            unread_by_room: self.unread_by_room.clone(),
+            room_to_demand: self.room_to_demand.clone(),
+            seen_notices: self.seen_notices.clone(),
+        }
     }
 
     fn total_unread(&self) -> u64 {
@@ -99,11 +145,17 @@ impl Runtime {
     }
 
     fn mark_demand_read(&mut self, demand_id: &str) -> bool {
+        if let Some(notice) = &mut self.last_notice
+            && notice.target.demand_id.as_deref() == Some(demand_id)
+        {
+            notice.room_ready_unread = false;
+        }
         if let Some(unread) = self.unread_by_demand.get_mut(demand_id)
             && unread.response_count != 0
         {
             unread.response_count = 0;
             self.prune_demand_unread(demand_id);
+            self.notification_state_dirty = true;
             return true;
         }
         false
@@ -116,6 +168,29 @@ impl Runtime {
         }) {
             self.last_notice = None;
         }
+    }
+
+    fn mark_room_ready_read(&mut self, demand_id: &str) {
+        if let Some(unread) = self.unread_by_demand.get_mut(demand_id)
+            && unread.response_count != 0
+        {
+            unread.response_count -= 1;
+            self.prune_demand_unread(demand_id);
+            self.notification_state_dirty = true;
+        }
+    }
+
+    fn clear_unread(&mut self) -> bool {
+        if let Some(notice) = &mut self.last_notice {
+            notice.room_ready_unread = false;
+        }
+        if self.total_unread() == 0 {
+            return false;
+        }
+        self.unread_by_demand.clear();
+        self.unread_by_room.clear();
+        self.notification_state_dirty = true;
+        true
     }
 
     fn remove_room_unread_from_demand(&mut self, demand_id: &str, count: u64) {
@@ -134,6 +209,7 @@ impl Runtime {
             return;
         }
         let previous = self.room_to_demand.insert(room_id.into(), demand_id.into());
+        self.notification_state_dirty = true;
         if let Some(&count) = self.unread_by_room.get(room_id) {
             if let Some(previous) = previous {
                 self.remove_room_unread_from_demand(&previous, count);
@@ -155,6 +231,7 @@ impl Runtime {
         if let Some(demand_id) = self.room_to_demand.get(room_id).cloned() {
             self.remove_room_unread_from_demand(&demand_id, count);
         }
+        self.notification_state_dirty = true;
         true
     }
 
@@ -168,17 +245,21 @@ impl Runtime {
     }
 
     fn open_notification(&mut self, notice_id: u64) -> bool {
-        let Some(notice) = &self.last_notice else {
+        let Some(notice) = &mut self.last_notice else {
             return false;
         };
         if notice.id != notice_id {
             return false;
         }
         let mut target = notice.target.clone();
+        let room_ready_unread = std::mem::take(&mut notice.room_ready_unread);
         if let Some(room_id) = &target.room_id {
             self.mark_room_read(room_id, target.demand_id.as_deref());
             if target.demand_id.is_none() {
                 target.demand_id = self.room_to_demand.get(room_id).cloned();
+            }
+            if room_ready_unread && let Some(demand_id) = &target.demand_id {
+                self.mark_room_ready_read(demand_id);
             }
         } else if let Some(demand_id) = &target.demand_id {
             self.mark_demand_read(demand_id);
@@ -194,6 +275,7 @@ impl Runtime {
             title: title.into(),
             body: body.into(),
             target,
+            room_ready_unread: false,
         });
     }
 
@@ -203,6 +285,7 @@ impl Runtime {
                 .entry(id.clone())
                 .or_default()
                 .response_count += 1;
+            self.notification_state_dirty = true;
         }
         self.notify(title, body, target);
     }
@@ -216,6 +299,7 @@ impl Runtime {
         {
             return false;
         }
+        self.notification_state_dirty |= match_id.is_some();
         let demand_id = demand_id.or_else(|| match_demand_id(item, member_id));
         let mut others = 0;
         let mut other_title = None;
@@ -310,7 +394,9 @@ impl Runtime {
                 {
                     return false;
                 }
+                self.notification_state_dirty = true;
                 let room_title = string_field(room, "title").unwrap_or_else(|| "需求群聊".into());
+                let room_ready_unread = demand_id.is_some();
                 self.notify_response(
                     &format!("临时群已开好：{room_title}"),
                     "全员已同意，点击进入群聊（默认 24 小时）",
@@ -320,6 +406,9 @@ impl Runtime {
                         match_id: None,
                     },
                 );
+                if let Some(notice) = &mut self.last_notice {
+                    notice.room_ready_unread = room_ready_unread;
+                }
             }
             "room.message" => {
                 let message = data.get("message").unwrap_or(data);
@@ -338,6 +427,7 @@ impl Runtime {
                 }
                 let demand_id = demand_id.or_else(|| self.room_to_demand.get(&room_id).cloned());
                 *self.unread_by_room.entry(room_id.clone()).or_default() += 1;
+                self.notification_state_dirty = true;
                 if let Some(id) = &demand_id {
                     self.unread_by_demand
                         .entry(id.clone())
@@ -374,6 +464,29 @@ impl Runtime {
             _ => return false,
         }
         true
+    }
+
+    fn receive_events(
+        &mut self,
+        events: &mut Vec<Event>,
+        received_through: u64,
+        member_id: &str,
+    ) -> bool {
+        let mut new_notice = false;
+        events.retain(|event| {
+            if event.seq <= self.last_seq {
+                return false;
+            }
+            self.last_seq = event.seq;
+            self.notification_state_dirty = true;
+            new_notice |= self.receive(event, member_id);
+            true
+        });
+        if received_through > self.last_seq {
+            self.last_seq = received_through;
+            self.notification_state_dirty = true;
+        }
+        new_notice
     }
 }
 
@@ -448,11 +561,17 @@ impl Hub {
         outbox: Outbox,
         publish: impl Fn(Update) + Send + Sync + 'static,
     ) -> Self {
+        let mut runtime = Runtime::default();
+        if let Some(current) = session.get()
+            && let Some(state) = session.load_notification_state(api.origin(), &current.member.id)
+        {
+            runtime.restore_notification_state(state);
+        }
         Self {
             api,
             session,
             outbox: Mutex::new(outbox),
-            runtime: Mutex::default(),
+            runtime: Mutex::new(runtime),
             changed: Condvar::new(),
             publish: Box::new(publish),
         }
@@ -513,6 +632,12 @@ impl Hub {
             .set(session)
             .map_err(|_| Failure::session_io())?;
         runtime.reset();
+        if let Some(state) = self
+            .session
+            .load_notification_state(self.api.origin(), &member.id)
+        {
+            runtime.restore_notification_state(state);
+        }
         self.changed.notify_all();
         (self.publish)(Update::default());
         Ok(member)
@@ -535,11 +660,27 @@ impl Hub {
     }
 
     fn clear_session(&self, runtime: &mut Runtime) -> ApiResult<()> {
+        self.persist_notification_state(runtime);
         self.session.clear().map_err(|_| Failure::session_io())?;
         runtime.reset();
         self.changed.notify_all();
         (self.publish)(Update::default());
         Ok(())
+    }
+
+    fn persist_notification_state(&self, runtime: &mut Runtime) {
+        if runtime.notification_state_dirty
+            && let Some(session) = self.session.get()
+        {
+            match self.session.save_notification_state(
+                self.api.origin(),
+                &session.member.id,
+                &runtime.notification_state(),
+            ) {
+                Ok(()) => runtime.notification_state_dirty = false,
+                Err(error) => eprintln!("unable to save Tray notification state: {error}"),
+            }
+        }
     }
 
     fn expire(&self, generation: u64) -> ApiResult<()> {
@@ -582,7 +723,9 @@ impl Hub {
             return Err(Failure::login_required());
         }
         let value = result?;
-        if let Some(update) = effect(&mut runtime, &value, &session.member) {
+        let update = effect(&mut runtime, &value, &session.member);
+        self.persist_notification_state(&mut runtime);
+        if let Some(update) = update {
             (self.publish)(update);
         }
         Ok(value)
@@ -827,6 +970,7 @@ impl Hub {
             return Err(Failure::login_required());
         }
         runtime.open_room(room_id.clone(), demand_id);
+        self.persist_notification_state(&mut runtime);
         (self.publish)(Update {
             show_main: true,
             ..Update::default()
@@ -850,6 +994,7 @@ impl Hub {
     pub fn open_notification(&self, notice_id: u64) {
         let mut runtime = self.runtime.lock().expect("hub state");
         if runtime.open_notification(notice_id) {
+            self.persist_notification_state(&mut runtime);
             (self.publish)(Update {
                 show_main: true,
                 ..Update::default()
@@ -860,22 +1005,26 @@ impl Hub {
     pub fn mark_demand_read(&self, demand_id: &str) {
         let mut runtime = self.runtime.lock().expect("hub state");
         if runtime.mark_demand_read(demand_id) {
+            self.persist_notification_state(&mut runtime);
             (self.publish)(Update::default());
         }
     }
 
     pub fn mark_room_read(&self, room_id: &str, demand_id: Option<&str>) {
         let mut runtime = self.runtime.lock().expect("hub state");
-        if self.session.get().is_some() && runtime.mark_room_read(room_id, demand_id) {
-            (self.publish)(Update::default());
+        if self.session.get().is_some() {
+            let unread_changed = runtime.mark_room_read(room_id, demand_id);
+            self.persist_notification_state(&mut runtime);
+            if unread_changed {
+                (self.publish)(Update::default());
+            }
         }
     }
 
     pub fn clear_unread(&self) {
         let mut runtime = self.runtime.lock().expect("hub state");
-        if runtime.total_unread() != 0 {
-            runtime.unread_by_demand.clear();
-            runtime.unread_by_room.clear();
+        if runtime.clear_unread() {
+            self.persist_notification_state(&mut runtime);
             (self.publish)(Update::default());
         }
     }
@@ -965,16 +1114,9 @@ impl Hub {
                     if runtime.generation != generation {
                         continue;
                     }
-                    let mut new_notice = false;
-                    events.retain(|event| {
-                        if event.seq <= runtime.last_seq {
-                            return false;
-                        }
-                        runtime.last_seq = event.seq;
-                        new_notice |= runtime.receive(event, &session.member.id);
-                        true
-                    });
-                    runtime.last_seq = runtime.last_seq.max(last_seq);
+                    let new_notice =
+                        runtime.receive_events(&mut events, last_seq, &session.member.id);
+                    self.persist_notification_state(&mut runtime);
                     if !events.is_empty() {
                         let refresh_lists = events.iter().any(|event| {
                             matches!(event.kind.as_str(), "room.updated" | "match.updated" | "demand.updated")
@@ -1019,6 +1161,7 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::{Session, tests::TestDir};
 
     fn receive(runtime: &mut Runtime, kind: &str, data: Value) -> bool {
         runtime.receive(
@@ -1209,6 +1352,141 @@ mod tests {
             json!({"total": 1, "demands": {"d1": {"responseCount": 1, "roomMessageCount": 0}},
                    "rooms": {}})
         );
+    }
+
+    #[test]
+    fn room_ready_notice_clears_its_response_once_and_preserves_other_unread() {
+        let mut runtime = Runtime::default();
+        response(&mut runtime, "d1");
+        response(&mut runtime, "d2");
+        message(&mut runtime, "r1", Some("d1"));
+        message(&mut runtime, "r2", Some("d2"));
+        assert!(receive(
+            &mut runtime,
+            "room.ready",
+            json!({"room": {"id": "r1", "demandId": "d1"}}),
+        ));
+        assert_eq!(runtime.total_unread(), 5);
+
+        assert!(runtime.open_notification(runtime.notice_id));
+        assert!(matches!(runtime.active_view, View::Room));
+        assert_eq!(runtime.target.room_id.as_deref(), Some("r1"));
+        assert_eq!(
+            unread(&runtime),
+            json!({
+                "total": 3,
+                "demands": {
+                    "d1": {"responseCount": 1, "roomMessageCount": 0},
+                    "d2": {"responseCount": 1, "roomMessageCount": 1}
+                },
+                "rooms": {"r2": 1}
+            })
+        );
+        assert!(runtime.open_notification(runtime.notice_id));
+        assert_eq!(runtime.total_unread(), 3);
+    }
+
+    #[test]
+    fn reading_the_demand_or_clearing_unread_disarms_the_ready_notice() {
+        for clear_all in [false, true] {
+            let mut runtime = Runtime::default();
+            assert!(receive(
+                &mut runtime,
+                "room.ready",
+                json!({"room": {"id": "r1", "demandId": "d1"}}),
+            ));
+            if clear_all {
+                assert!(runtime.clear_unread());
+            } else {
+                assert!(runtime.mark_demand_read("d1"));
+            }
+            assert!(!runtime.last_notice.as_ref().unwrap().room_ready_unread);
+            assert!(runtime.open_notification(runtime.notice_id));
+            assert_eq!(runtime.total_unread(), 0);
+        }
+    }
+
+    #[test]
+    fn restart_restores_cursor_unread_and_mapping_without_replaying_notices() {
+        let dir = TestDir::new();
+        let origin = "http://127.0.0.1:1";
+        let session = SessionStore::open(dir.path()).unwrap();
+        session
+            .set(Session {
+                token: "test-token".into(),
+                member: Member {
+                    id: "me".into(),
+                    email: "member@example.test".into(),
+                    display_name: "Test member".into(),
+                },
+            })
+            .unwrap();
+        let hub = Hub::new(
+            Api::new(origin).unwrap(),
+            session,
+            Outbox::open(dir.path()).unwrap(),
+            |_| {},
+        );
+
+        // There is no unread to clear, but the room association changes.
+        hub.mark_room_read("r1", Some("d1"));
+        let saved = hub.session.load_notification_state(origin, "me").unwrap();
+        assert_eq!(saved.room_to_demand.get("r1").unwrap(), "d1");
+        let event_batch = || {
+            vec![
+                Event {
+                    seq: 1,
+                    kind: "demand.response".into(),
+                    data: json!({"demandId": "d1", "response": {"title": "Reply"}}),
+                },
+                Event {
+                    seq: 2,
+                    kind: "room.message".into(),
+                    data: json!({"roomId": "r1", "message": {"senderId": "other", "body": "Hello"}}),
+                },
+            ]
+        };
+        {
+            let mut runtime = hub.runtime.lock().unwrap();
+            assert!(runtime.receive_events(&mut event_batch(), 2, "me"));
+            hub.persist_notification_state(&mut runtime);
+            assert!(!runtime.receive_events(&mut Vec::new(), 4, "me"));
+            hub.persist_notification_state(&mut runtime);
+        }
+        hub.mark_demand_read("d1");
+        drop(hub);
+
+        let session = SessionStore::open(dir.path()).unwrap();
+        let hub = Hub::new(
+            Api::new(origin).unwrap(),
+            session,
+            Outbox::open(dir.path()).unwrap(),
+            |_| {},
+        );
+        {
+            let mut runtime = hub.runtime.lock().unwrap();
+            assert_eq!(runtime.last_seq, 4);
+            assert!(runtime.last_notice.is_none());
+            assert_eq!(
+                unread(&runtime),
+                json!({
+                    "total": 1,
+                    "demands": {"d1": {"responseCount": 0, "roomMessageCount": 1}},
+                    "rooms": {"r1": 1}
+                })
+            );
+            let mut replay = event_batch();
+            assert!(!runtime.receive_events(&mut replay, 2, "me"));
+            assert!(replay.is_empty());
+        }
+        hub.open_room("r1".into(), None).unwrap();
+        let state = hub.bootstrap();
+        assert_eq!(state.unread_count, 0);
+        assert_eq!(state.target.demand_id.as_deref(), Some("d1"));
+        let saved = hub.session.load_notification_state(origin, "me").unwrap();
+        assert_eq!(saved.last_seq, 4);
+        assert!(saved.unread_by_room.is_empty());
+        assert!(saved.demand_response_unread.is_empty());
     }
 
     #[test]

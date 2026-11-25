@@ -19,7 +19,9 @@ let cache = {
   responsesByDemand: new Map(),
   revisionsByDemand: new Map()
 }
+const revisionRequests = new Map()
 let chat = null
+let pendingRoomSends = new Set()
 let syncRevision = 0
 let loadRevision = 0
 let pendingEvents = []
@@ -127,18 +129,25 @@ function demandMetaLine(demand) {
   return [venue, start, party].filter(Boolean).join(' · ')
 }
 
-function matchForDemand(demandId) {
-  return cache.matches.find(m =>
+function matchesForDemand(demandId) {
+  return cache.matches.filter(m =>
     m.myDemandId === demandId ||
     (m.participants || []).some(p => p.demandId === demandId)
-  ) || null
+  )
+}
+
+function pendingMatchForDemand(demandId) {
+  const matches = matchesForDemand(demandId).filter(match => match.status === 'pending')
+  return matches.find(match => match.myDecision === 'pending') || matches[0] || null
 }
 
 function roomForDemand(demandId) {
   const direct = cache.rooms.find(r => r.demandId === demandId)
   if (direct) return direct
-  const match = matchForDemand(demandId)
-  if (match?.roomId) return cache.rooms.find(r => r.id === match.roomId) || null
+  for (const { roomId } of matchesForDemand(demandId)) {
+    const room = roomId && cache.rooms.find(item => item.id === roomId)
+    if (room) return room
+  }
   return null
 }
 
@@ -209,6 +218,7 @@ function setView(next, demandId = null, roomId = null) {
       if (r?.demandId) selectedDemandId = r.demandId
     }
     selectChatRoom(selectedRoomId)
+    renderMessageComposer()
   } else if (view !== 'room') {
     chat = null
   }
@@ -226,11 +236,15 @@ function rememberView() {
 }
 
 async function openDemandDetail(demandId) {
+  const demandCache = cache
+  const isCurrent = () => cache === demandCache && view === 'detail' && selectedDemandId === demandId
   setView('detail', demandId, null)
   await rememberView()
+  if (!isCurrent()) return
   await invoke('mark_demand_read', { demandId }).catch(() => {})
+  if (!isCurrent()) return
   await Promise.all([loadDemandResponses(demandId), loadDemandRevisions(demandId)])
-  renderDetail()
+  if (isCurrent()) renderDetail()
 }
 
 async function openChatRoom(roomId, demandId = null) {
@@ -465,10 +479,10 @@ function renderDemandsHome() {
   }
 
   const buildCard = demand => {
-    const match = matchForDemand(demand.id)
+    const match = pendingMatchForDemand(demand.id)
     const room = roomForDemand(demand.id)
     const unread = unreadForDemand(demand.id)
-    const hasAttention = unread.responseCount > 0 || unread.roomCount > 0 || (match && match.status === 'pending' && match.myDecision === 'pending')
+    const hasAttention = unread.responseCount > 0 || unread.roomCount > 0 || match?.myDecision === 'pending'
 
     const card = node('button', undefined, hasAttention ? 'demand-card has-attention' : 'demand-card')
     card.type = 'button'
@@ -486,7 +500,7 @@ function renderDemandsHome() {
     if (room) {
       statusText = room.retentionStatus === 'retained' ? '长期群' : '群聊中'
       statusCls = 'pill ok'
-    } else if (match && match.status === 'pending') {
+    } else if (match) {
       statusText = match.myDecision === 'accept' ? '待确认' : '有邀请'
       statusCls = 'pill accent'
     } else if (demand.status === 'completed') {
@@ -516,7 +530,7 @@ function renderDemandsHome() {
       const chip = node('span', label, 'pill ok')
       if (unread.roomCount > 0) chip.append(node('span', String(unread.roomCount), 'unread-dot'))
       pills.append(chip)
-    } else if (match && match.status === 'pending') {
+    } else if (match) {
       const accepted = (match.participants || []).filter(p => p.decision === 'accept').length
       const total = (match.participants || []).length
       pills.append(node('span', `${accepted}/${total} 已同意`, 'pill accent'))
@@ -553,6 +567,7 @@ function buildHtmlCardFrame(rawHtml) {
 }
 
 function renderRevisions(demandId) {
+  if (view !== 'detail' || selectedDemandId !== demandId) return
   const panel = $('revision-panel')
   if (!revisionsOpen) {
     panel.hidden = true
@@ -612,13 +627,17 @@ function renderDetail() {
   verBtn.type = 'button'
   verBtn.setAttribute('aria-expanded', String(revisionsOpen))
   verBtn.title = '查看变更历史'
-  verBtn.addEventListener('click', () => {
+  verBtn.addEventListener('click', async () => {
     revisionsOpen = !revisionsOpen
     verBtn.setAttribute('aria-expanded', String(revisionsOpen))
-    if (revisionsOpen) {
-      loadDemandRevisions(demand.id).then(() => renderRevisions(demand.id)).catch(report)
-    } else {
+    if (!revisionsOpen) {
       renderRevisions(demand.id)
+      return
+    }
+    try {
+      if (await loadDemandRevisions(demand.id)) renderRevisions(demand.id)
+    } catch (error) {
+      if (view === 'detail' && selectedDemandId === demand.id && revisionsOpen) report(error)
     }
   })
   metaRow.append(verBtn)
@@ -657,7 +676,7 @@ function renderDetail() {
   const list = $('detail-responses')
   const items = []
   const room = roomForDemand(demand.id)
-  const match = matchForDemand(demand.id)
+  const match = pendingMatchForDemand(demand.id)
   const responses = cache.responsesByDemand.get(demand.id) || []
   const unread = unreadForDemand(demand.id)
 
@@ -682,7 +701,7 @@ function renderDetail() {
   }
 
   // 2. Group Invite
-  if (match && match.status === 'pending') {
+  if (match) {
     const card = node('article', undefined, 'card invite-card')
     const participants = match.participants || []
     const others = participants.filter(p => p.memberId !== bootstrap.member.id)
@@ -793,8 +812,17 @@ function selectChatRoom(roomId) {
   }
 }
 
+function renderMessageComposer(room = cache.rooms.find(item => item.id === selectedRoomId)) {
+  const expired = room?.retentionStatus === 'expired'
+  const disabled = !room || expired
+  $('message').disabled = disabled
+  $('send-message').disabled = disabled || pendingRoomSends.has(room.id)
+  $('message').placeholder = expired ? '已到期，投票保留后可发言' : '输入消息…'
+}
+
 function renderRoomHeader() {
   const room = cache.rooms.find(r => r.id === selectedRoomId)
+  renderMessageComposer(room)
   if (!room) {
     $('room-title').textContent = '群聊'
     $('room-meta').textContent = ''
@@ -840,10 +868,6 @@ function renderRoomHeader() {
     )
     bar.append(actions)
   }
-
-  $('message').disabled = expired
-  $('send-message').disabled = expired
-  $('message').placeholder = expired ? '已到期，投票保留后可发言' : '输入消息…'
 }
 
 async function loadMessages() {
@@ -893,9 +917,20 @@ async function loadDemandResponses(demandId) {
 }
 
 async function loadDemandRevisions(demandId) {
-  if (!demandId) return
-  const result = await invoke('list_demand_revisions', { demandId })
-  cache.revisionsByDemand.set(demandId, result.revisions || [])
+  if (!demandId) return false
+  const request = invoke('list_demand_revisions', { demandId })
+  revisionRequests.set(demandId, request)
+  try {
+    const result = await request
+    if (revisionRequests.get(demandId) !== request) return false
+    cache.revisionsByDemand.set(demandId, result.revisions || [])
+    return true
+  } catch (error) {
+    if (revisionRequests.get(demandId) === request) throw error
+    return false
+  } finally {
+    if (revisionRequests.get(demandId) === request) revisionRequests.delete(demandId)
+  }
 }
 
 async function refreshAll() {
@@ -934,6 +969,7 @@ async function sync(update, force = false) {
   const navigated = previous?.navigationId !== next.navigationId
   if (accountChanged) {
     cache = { demands: [], activeCount: 0, maxActive: 3, matches: [], rooms: [], responsesByDemand: new Map(), revisionsByDemand: new Map() }
+    revisionRequests.clear()
     renderSubmissions([])
     renderProfileSync({})
     accountProfile = null
@@ -943,6 +979,7 @@ async function sync(update, force = false) {
     if ($('profile-confirm').open) $('profile-confirm').close('cancel')
     renderAccountProfile()
     chat = null
+    pendingRoomSends = new Set()
     selectedDemandId = null
     selectedRoomId = null
     revisionsOpen = false
@@ -1052,20 +1089,31 @@ $('back-to-detail').addEventListener('click', () => {
   }
 })
 
-$('message-form').addEventListener('submit', event => {
+$('message-form').addEventListener('submit', async event => {
   event.preventDefault()
-  const roomId = chat?.id
+  const active = chat
   const input = $('message')
   const text = input.value.trim()
-  if (!roomId || !text) return
-  act($('send-message'), async () => {
-    await invoke('send_room_message', { roomId, text })
-    if (roomId === chat?.id) {
+  const room = cache.rooms.find(item => item.id === active?.id)
+  const roomSends = pendingRoomSends
+  if (view !== 'room' || !room || !text || room.retentionStatus === 'expired' || roomSends.has(room.id)) return
+
+  roomSends.add(room.id)
+  renderMessageComposer(room)
+  feedback()
+  try {
+    await invoke('send_room_message', { roomId: room.id, text })
+    if (chat === active) {
       if (input.value.trim() === text) input.value = ''
-      input.focus()
-      await loadMessages()
+      if (!input.disabled) input.focus()
     }
-  })
+    if (roomSends === pendingRoomSends && chat?.id === room.id) await loadMessages()
+  } catch (error) {
+    if (chat === active) report(error)
+  } finally {
+    roomSends.delete(room.id)
+    if (roomSends === pendingRoomSends && view === 'room') renderMessageComposer()
+  }
 })
 
 $('leave-room').addEventListener('click', () => act($('leave-room'), async () => {
