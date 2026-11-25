@@ -24,6 +24,7 @@
               <strong id="menu-name"></strong>
               <span id="menu-email" class="muted"></span>
             </div>
+            <button id="open-profile" type="button" class="menu-item" role="menuitem">我的资料与授权</button>
             <button id="logout" type="button" class="menu-item danger" role="menuitem">退出登录</button>
           </div>
         </div>
@@ -82,6 +83,7 @@
           <strong class="muted">本机待同步</strong>
           <div id="outbox-items" class="spec-rows"></div>
         </section>
+        <span id="demand-sync-anchor" hidden></span>
         <section id="profile-sync-wrap" class="spec-box" aria-label="资料同步" hidden>
           <strong class="muted">资料同步</strong>
           <div id="profile-sync-items" class="spec-rows"></div>
@@ -91,6 +93,37 @@
           <summary id="history-summary">已结束</summary>
           <div id="history-demands" class="card-list history-list"></div>
         </details>
+      </section>
+
+      <section id="view-profile" class="page" aria-labelledby="profile-title" hidden>
+        <div class="subbar">
+          <button id="profile-back" type="button" class="btn-quiet back-btn">‹ 需求</button>
+          <button id="reload-profile" type="button" class="btn compact">刷新</button>
+        </div>
+        <div class="page-head">
+          <h2 id="profile-title">我的资料与授权</h2>
+          <span id="profile-source" class="muted" role="status"></span>
+        </div>
+        <section class="spec-box profile-card" aria-labelledby="profile-personal-title">
+          <h3 id="profile-personal-title">本人资料</h3>
+          <div id="profile-personal" class="spec-rows"></div>
+        </section>
+        <span id="profile-sync-anchor" hidden></span>
+        <section class="spec-box profile-card" aria-labelledby="profile-inferred-title">
+          <h3 id="profile-inferred-title">后台推断</h3>
+          <div id="profile-inferred" class="profile-tags"></div>
+          <div id="profile-modeling" class="spec-rows"></div>
+        </section>
+        <section class="spec-box profile-card" aria-labelledby="profile-grants-title">
+          <h3 id="profile-grants-title">单次匹配授权</h3>
+          <div id="profile-grants" class="spec-rows"></div>
+        </section>
+        <section class="spec-box profile-card">
+          <label class="profile-notifications" for="do-not-disturb">
+            <span><strong>本机免打扰</strong><span class="muted"> 暂停弹窗，保留未读提醒</span></span>
+            <input id="do-not-disturb" type="checkbox">
+          </label>
+        </section>
       </section>
 
       <!-- Level 2: Demand Detail -->
@@ -127,6 +160,17 @@
         </form>
       </section>
     </main>
+
+    <dialog id="profile-confirm" class="spec-box profile-dialog" aria-labelledby="profile-confirm-title" aria-describedby="profile-confirm-message">
+      <form method="dialog">
+        <h3 id="profile-confirm-title"></h3>
+        <p id="profile-confirm-message"></p>
+        <div class="card-actions">
+          <button type="submit" class="btn" value="cancel" autofocus>返回</button>
+          <button type="submit" class="btn primary" value="confirm">确认</button>
+        </div>
+      </form>
+    </dialog>
 
     <!-- New Demand Command Sheet -->
     <div id="new-sheet" class="sheet-backdrop" hidden>

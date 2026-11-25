@@ -114,7 +114,7 @@
 ```
 
 ### 2.2 查询、完成与撤回本人需求
-- `GET /api/v1/demands`（可选 `?status=open`）→ `200 {"demands": [...]}`
+- `GET /api/v1/demands`（可选 `?status=open`）→ `200 {"demands": [...]}`。只列本人需求，已签发授权的需求包含 `matchAuthorization` 当前状态。
 - `GET /api/v1/demands/:id` → `200 {"demand": {...}}`，含单次匹配授权状态。仅本人可查询。
 - `POST /api/v1/demands/:id/complete` → 完成自己的需求，释放活跃名额，返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/:id/cancel` → 仅本人可操作；将需求置为 `cancelled`，同时将关联 `pending` 匹配置为 `cancelled` 并通知各方；返回 `200 {"demand": {...}}`。

@@ -9,7 +9,8 @@ use api::{Api, ApiResult, Failure};
 use hub::{Bootstrap, Hub, Update, View};
 use outbox::Outbox;
 use session::{Member, SessionStore};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "macos"))]
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
@@ -26,16 +27,33 @@ const TRAY_ID: &str = "a2w";
 struct TraySettings {
     title: String,
     window_offset_x: Option<i32>,
+    path: PathBuf,
+    do_not_disturb: Mutex<bool>,
 }
 
 impl TraySettings {
-    fn from_env() -> Self {
-        Self {
+    fn from_env(dir: &Path) -> std::io::Result<Self> {
+        let path = dir.join("do-not-disturb.json");
+        let do_not_disturb = session::read_private_json(&path)?.unwrap_or(false);
+        Ok(Self {
             title: std::env::var("MILKBIRD_TRAY_TITLE").unwrap_or_else(|_| TRAY_ID.into()),
             window_offset_x: std::env::var("MILKBIRD_WINDOW_OFFSET_X")
                 .ok()
                 .and_then(|offset| offset.trim().parse().ok()),
-        }
+            path,
+            do_not_disturb: Mutex::new(do_not_disturb),
+        })
+    }
+
+    fn is_quiet(&self) -> bool {
+        *self.do_not_disturb.lock().expect("tray notification setting")
+    }
+
+    fn set_do_not_disturb(&self, enabled: bool) -> std::io::Result<()> {
+        let mut setting = self.do_not_disturb.lock().expect("tray notification setting");
+        session::write_private_json(&self.path, &enabled)?;
+        *setting = enabled;
+        Ok(())
     }
 }
 
@@ -49,9 +67,35 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| Failure::new("internal_error", "托盘暂时无法处理此请求。"))?
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayBootstrap {
+    #[serde(flatten)]
+    hub: Bootstrap,
+    do_not_disturb: bool,
+}
+
 #[tauri::command]
-fn get_bootstrap(state: State<'_, Arc<Hub>>) -> Bootstrap {
-    state.bootstrap()
+fn get_bootstrap(state: State<'_, Arc<Hub>>, settings: State<'_, TraySettings>) -> TrayBootstrap {
+    TrayBootstrap {
+        hub: state.bootstrap(),
+        do_not_disturb: settings.is_quiet(),
+    }
+}
+
+#[tauri::command]
+fn set_do_not_disturb(
+    app: AppHandle,
+    settings: State<'_, TraySettings>,
+    enabled: bool,
+) -> ApiResult<()> {
+    settings
+        .set_do_not_disturb(enabled)
+        .map_err(|_| Failure::new("notification_settings_io", "无法保存本机免打扰设置。"))?;
+    if enabled && let Some(toast) = app.get_webview_window("toast") {
+        let _ = toast.hide();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -194,6 +238,25 @@ async fn leave_room(state: State<'_, Arc<Hub>>, room_id: String) -> ApiResult {
 #[tauri::command]
 async fn get_profile(state: State<'_, Arc<Hub>>) -> ApiResult {
     blocking(state, Hub::get_profile).await
+}
+
+#[tauri::command]
+async fn set_modeling_consent(
+    state: State<'_, Arc<Hub>>,
+    confirmed: bool,
+    source: String,
+    enabled: bool,
+    base_revision: u64,
+) -> ApiResult {
+    if !confirmed {
+        return Err(Failure::confirmation_required());
+    }
+    blocking(state, move |hub| {
+        hub.set_modeling_consent(&serde_json::json!({
+            "source": source, "enabled": enabled, "baseRevision": base_revision,
+        }))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -402,8 +465,9 @@ fn show_main(app: &AppHandle) {
 
 fn apply_update(app: &AppHandle, update: Update) {
     let state = app.state::<Arc<Hub>>().bootstrap();
+    let settings = app.state::<TraySettings>();
+    let quiet = settings.is_quiet();
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let settings = app.state::<TraySettings>();
         let title = &settings.title;
         let title = if state.unread_count == 0 {
             title.clone()
@@ -417,7 +481,7 @@ fn apply_update(app: &AppHandle, update: Update) {
         .is_some_and(|window| window.is_visible().unwrap_or(false));
     if update.show_main {
         show_main(app);
-    } else if main_visible || state.notice.is_none() {
+    } else if quiet || main_visible || state.notice.is_none() {
         if let Some(toast) = app.get_webview_window("toast") {
             let _ = toast.hide();
         }
@@ -425,7 +489,7 @@ fn apply_update(app: &AppHandle, update: Update) {
         show_window(app, "toast", false);
     }
     let _ = app.emit_to("main", "hub-event", &update);
-    if update.new_notice {
+    if update.new_notice && !quiet {
         let _ = app.emit_to("toast", "hub-event", &update);
     }
 }
@@ -434,6 +498,7 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
+            set_do_not_disturb,
             request_email_code,
             verify_email_code,
             logout,
@@ -454,6 +519,7 @@ fn main() {
             vote_room_retention,
             leave_room,
             get_profile,
+            set_modeling_consent,
             profile_sync_status,
             discard_profile_draft,
             discard_failed_profile_edit,
@@ -466,7 +532,9 @@ fn main() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
-            let settings = TraySettings::from_env();
+            let dir = session::directory()?;
+            let bridge = bridge::Bridge::bind(&dir)?;
+            let settings = TraySettings::from_env(&dir)?;
             let show = MenuItem::with_id(app, "show", "打开奶鸟俱乐部", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出奶鸟俱乐部", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -504,8 +572,6 @@ fn main() {
             app.manage(settings);
             tray.build(app)?;
 
-            let dir = session::directory()?;
-            let bridge = bridge::Bridge::bind(&dir)?;
             let handle = app.handle().clone();
             let hub = Arc::new(Hub::new(
                 Api::from_env()?,
@@ -545,7 +611,20 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{main_window_x, toast_window_pos};
+    use super::{TraySettings, main_window_x, toast_window_pos};
+    use crate::session::tests::TestDir;
+
+    #[test]
+    fn quiet_time_is_local_to_the_device_and_survives_reopen() {
+        let dir = TestDir::new();
+        let settings = TraySettings::from_env(dir.path()).unwrap();
+        assert!(!settings.is_quiet());
+        settings.set_do_not_disturb(true).unwrap();
+        let reopened = TraySettings::from_env(dir.path()).unwrap();
+        assert!(reopened.is_quiet());
+        reopened.set_do_not_disturb(false).unwrap();
+        assert!(!TraySettings::from_env(dir.path()).unwrap().is_quiet());
+    }
 
     #[test]
     fn main_window_offset_uses_work_area() {

@@ -23,6 +23,7 @@ pub enum View {
     Demands,
     Detail,
     Room,
+    Profile,
 }
 
 #[derive(Clone, Serialize)]
@@ -870,7 +871,7 @@ impl Hub {
         let mut runtime = self.runtime.lock().expect("hub state");
         if runtime.navigation_id == navigation_id && self.session.get().is_some() {
             let (demand_id, room_id) = match view {
-                View::Demands => (None, None),
+                View::Demands | View::Profile => (None, None),
                 View::Detail => (demand_id, None),
                 View::Room => {
                     let demand_id = demand_id.or_else(|| {

@@ -6,7 +6,7 @@ const appWindow = window.__TAURI__.window.getCurrentWindow()
 const $ = id => document.getElementById(id)
 
 let bootstrap
-let view = 'demands' // demands | detail | room
+let view = 'demands' // demands | detail | room | profile
 let selectedDemandId = null
 let selectedRoomId = null
 let revisionsOpen = false
@@ -24,6 +24,11 @@ let syncRevision = 0
 let loadRevision = 0
 let pendingEvents = []
 let pendingRefresh = false
+let profileRevision = 0
+let accountProfile = null
+let profileDemands = null
+let profileGrantsFresh = false
+let queuedWithdrawals = new Map()
 
 function node(tag, text, className) {
   const el = document.createElement(tag)
@@ -180,9 +185,15 @@ function renderShell() {
   $('view-demands').hidden = view !== 'demands'
   $('view-detail').hidden = view !== 'detail'
   $('view-room').hidden = view !== 'room'
+  $('view-profile').hidden = view !== 'profile'
+  $('do-not-disturb').checked = Boolean(bootstrap.doNotDisturb)
+  const anchor = $(view === 'profile' ? 'profile-sync-anchor' : 'demand-sync-anchor')
+  const syncPanel = $('profile-sync-wrap')
+  if (anchor.nextElementSibling !== syncPanel) anchor.after(syncPanel)
 }
 
 function setView(next, demandId = null, roomId = null) {
+  if (next !== 'profile' && $('profile-confirm').open) $('profile-confirm').close('cancel')
   if (next !== 'detail' || demandId !== selectedDemandId) revisionsOpen = false
   view = next
   if (demandId !== undefined) selectedDemandId = demandId
@@ -274,6 +285,112 @@ function renderProfileSync({ draft, edits = [] }) {
   }
   $('profile-sync-items').replaceChildren(...rows)
   $('profile-sync-wrap').hidden = rows.length === 0
+}
+
+function profileRow(label, description, action) {
+  const row = node('div', undefined, 'spec-row')
+  const text = node('div', undefined, 'spec-v')
+  text.append(node('strong', label), node('div', description, 'muted'))
+  row.append(text)
+  if (action) row.append(action)
+  return row
+}
+
+async function confirmProfileChange(title, message) {
+  const dialog = $('profile-confirm')
+  if (dialog.open) return false
+  const memberId = bootstrap?.member?.id
+  $('profile-confirm-title').textContent = title
+  $('profile-confirm-message').textContent = message
+  const listeners = new AbortController()
+  const options = { signal: listeners.signal }
+  try {
+    const confirmed = new Promise(resolve => {
+      dialog.addEventListener('close', () => {
+        if (!dialog.open) resolve(false)
+      }, options)
+      dialog.addEventListener('submit', event => {
+        event.preventDefault()
+        dialog.close()
+        resolve(event.submitter?.value === 'confirm')
+      }, options)
+    })
+    dialog.showModal()
+    return await confirmed && bootstrap?.member?.id === memberId
+  } finally {
+    listeners.abort()
+  }
+}
+
+function renderAccountProfile() {
+  const cached = accountProfile?.profileSource === 'cache'
+  $('profile-source').textContent = accountProfile ? (cached ? '上次同步' : '服务端已确认') : '资料暂不可用'
+  const local = accountProfile?.localProfile
+  const personal = []
+  if (local?.campus) personal.push(['常驻校区', local.campus])
+  if (local?.bio) personal.push(['个人简介', local.bio])
+  for (const [field, value] of Object.entries(local?.preferences || {})) {
+    personal.push([field, typeof value === 'object' ? JSON.stringify(value) : value])
+  }
+  $('profile-personal').replaceChildren(...(personal.length ? personal.map(([field, value]) => {
+    const row = node('div', undefined, 'spec-row')
+    row.append(node('span', field, 'spec-k'), node('span', value, 'spec-v'))
+    return row
+  }) : [node('p', accountProfile ? '暂无本人资料' : '暂时无法读取', 'muted')]))
+
+  const inferred = accountProfile?.cloudProfile?.modelingCategories || []
+  $('profile-inferred').replaceChildren(...(inferred.length
+    ? inferred.map(tag => node('span', tag, 'pill'))
+    : [node('span', accountProfile ? '暂无可用推断' : '暂时无法读取', 'muted')]))
+
+  const sources = [['demands', '需求分类'], ['interactions', '邀请与反馈']]
+  $('profile-modeling').replaceChildren(...sources.map(([source, label]) => {
+    const consent = accountProfile?.modeling?.[source]
+    const action = consent?.enabled ? (source === 'demands' ? '停用推断' : '撤回授权') : '开启授权'
+    const button = makeButton(action, async () => {
+      const enabled = !consent.enabled
+      const message = enabled
+        ? `俱乐部可用新产生的${label}改善后续匹配。`
+        : `俱乐部会清除${label}的建模输入，并停止依赖该来源的进行中需求。`
+      if (!await confirmProfileChange(`${action} · ${label}`, message)) return
+      const result = await invoke('set_modeling_consent', { confirmed: true, source, enabled, baseRevision: consent.revision })
+      await sync()
+      const count = result.revokedDemandIds?.length || 0
+      feedback(count ? `授权已撤回，已停止 ${count} 条需求。` : (enabled ? '授权已开启。' : '授权已撤回。'))
+    }, 'btn compact')
+    button.disabled = !consent || cached
+    const status = consent ? (consent.enabled ? '已授权长期建模' : '长期建模已关闭') : '状态不可用'
+    return profileRow(label, cached ? `上次同步 · ${status}` : status, button)
+  }))
+
+  const labels = { active: '有效', revoked: '已撤回', expired: '已过期', closed: '已结束' }
+  const grants = (profileDemands ?? cache.demands).filter(demand => demand.matchAuthorization)
+  const rows = grants.map(demand => {
+    const grant = demand.matchAuthorization
+    const queued = queuedWithdrawals.get(demand.idempotencyKey)
+    const pending = queued === 'withdrawing'
+    const status = pending ? '撤回待同步' : queued === 'withdrawal_failed' ? '撤回失败' : (labels[grant.status] || '状态不可用')
+    const action = grant.status === 'active' && !pending ? makeButton('撤回', async () => {
+      if (!await confirmProfileChange('撤回单次授权', `「${demand.title}」将停止匹配。`)) return
+      const result = await invoke('withdraw_submission', { idempotencyKey: demand.idempotencyKey })
+      await sync()
+      if (result.submission?.status === 'withdrawing') feedback('已停止本机补发，撤回待同步。')
+      else if (result.demand?.matchAuthorization?.status === 'revoked') feedback('服务端已确认撤回。')
+    }, 'btn-quiet danger-text') : null
+    return profileRow(demand.title, [profileGrantsFresh ? '' : '上次读取', status, shortTime(grant.expiresAt)].filter(Boolean).join(' · '), action)
+  })
+  $('profile-grants').replaceChildren(...(rows.length ? rows : [node('p', profileGrantsFresh ? '暂无单次授权' : '暂时无法读取授权', 'muted')]))
+}
+
+async function refreshAccountProfile() {
+  const revision = ++profileRevision
+  const memberId = bootstrap?.member?.id
+  const [profile, grants] = await Promise.allSettled([invoke('get_profile'), invoke('list_demands')])
+  if (revision !== profileRevision || view !== 'profile' || bootstrap?.member?.id !== memberId) return
+  accountProfile = profile.status === 'fulfilled' ? profile.value : null
+  profileGrantsFresh = grants.status === 'fulfilled'
+  if (profileGrantsFresh) profileDemands = grants.value.demands || []
+  renderAccountProfile()
 }
 
 function renderDemandsHome() {
@@ -761,6 +878,12 @@ async function sync(update, force = false) {
     cache = { demands: [], activeCount: 0, maxActive: 3, matches: [], rooms: [], responsesByDemand: new Map(), revisionsByDemand: new Map() }
     renderSubmissions([])
     renderProfileSync({})
+    accountProfile = null
+    profileDemands = null
+    profileGrantsFresh = false
+    queuedWithdrawals.clear()
+    if ($('profile-confirm').open) $('profile-confirm').close('cancel')
+    renderAccountProfile()
     chat = null
     selectedDemandId = null
     selectedRoomId = null
@@ -775,7 +898,7 @@ async function sync(update, force = false) {
   }
 
   if (navigated) {
-    const targetView = ['demands', 'detail', 'room'].includes(next.activeView) ? next.activeView : 'demands'
+    const targetView = ['demands', 'detail', 'room', 'profile'].includes(next.activeView) ? next.activeView : 'demands'
     setView(targetView, next.demandId || null, next.roomId || null)
   }
 
@@ -784,8 +907,15 @@ async function sync(update, force = false) {
     invoke('profile_sync_status')
   ])
   if (revision !== syncRevision) return
+  queuedWithdrawals = new Map(submissions.map(item => [item.idempotencyKey, item.status]))
   renderSubmissions(submissions)
   renderProfileSync(profileSync)
+
+  if (view === 'profile') {
+    renderShell()
+    await refreshAccountProfile()
+    return
+  }
 
   const onlyChatMessages = !refresh && !accountChanged && !navigated && events.length > 0 && events.every(e => e.type === 'room.message')
   if (onlyChatMessages) {
@@ -823,6 +953,32 @@ document.addEventListener('click', event => {
 })
 
 /* Navigation & Actions */
+$('open-profile').addEventListener('click', () => {
+  closeAccountMenu()
+  setView('profile')
+  rememberView()
+  sync().catch(report)
+})
+$('profile-back').addEventListener('click', () => {
+  setView('demands')
+  rememberView()
+  renderDemandsHome()
+  sync(undefined, true).catch(report)
+})
+$('reload-profile').addEventListener('click', () => act($('reload-profile'), () => sync()))
+$('do-not-disturb').addEventListener('change', () => {
+  const toggle = $('do-not-disturb')
+  const enabled = toggle.checked
+  act(toggle, async () => {
+    try {
+      await invoke('set_do_not_disturb', { enabled })
+      bootstrap.doNotDisturb = enabled
+    } finally {
+      renderShell()
+    }
+  })
+})
+
 $('back-to-demands').addEventListener('click', () => {
   setView('demands', null, null)
   rememberView()
