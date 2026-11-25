@@ -40,10 +40,16 @@ disable-model-invocation: true
 本节适用于所有新需求。考试查询用 `--category info`，考试主题作为 `--title`。
 
 - 将用途「仅用于本次匹配」、明确的截止时刻和共享的画像范围列入需求卡片，并一并请用户确认。画像范围默认空。用户明确选择长期字段或推断标签时，用 `get-profile` 获取所选值和来源版本，回读所选字段或标签。遇到已删除或缺失的字段，告知用户并请其确认调整后的共享范围。本次明确提供的地点和偏好优先。
-- 确认后，在 `submit-demand --confirmed` 的参数中加 `--single-match --expires-at … --idempotency-key …`。截止时刻用带时区的 RFC 3339。长期字段用 `--profile-field preferences.food=2` 这类参数，版本取自该次读取的 `localProfile.fieldVersions[字段名].version`。推断标签用 `--inferred-tag`，`--cloud-version` 取 `cloudProfile.updatedAt`。多个字段或标签重复传入对应参数。
+- 确认后，在 `submit-demand --confirmed` 的参数中加 `--single-match --expires-at … --idempotency-key …`。截止时刻用带时区的 RFC 3339。长期字段用 `--profile-field preferences.food=2` 这类参数，版本取自该次读取的 `localProfile.fieldVersions[字段名].version`。从 `cloudProfile.modelingCategories` 回读用户选中的标签，使用 `--inferred-tag`，`--cloud-version` 取同一次读取的 `cloudProfile.updatedAt`。多个字段或标签重复传入对应参数。
 - 提交超时时，用原确认单的完整参数、画像版本和幂等键重试。收到 `match_profile_changed` 时刷新画像，回读变更或失效的字段及标签，经用户重新确认后，才用新的幂等键提交。
 - 用 `get-demand --id …` 核对需求和授权。用户明确要求撤回时，用 `cancel-demand --id …`。已授权需求以回执的 `matchAuthorization.status` 为 `revoked` 为准，回执缺少授权状态时用 `get-demand` 复查。旧版无授权需求以 `demand.status` 为 `cancelled` 为准。
 - 条件变化时先检查原需求的授权。已绑定单次授权的需求需要用户确认撤回原请求，再按新确认单提交。旧版无授权需求可使用 `update-demand`。
+
+## 长期建模授权
+
+单次匹配授权只适用于当前需求。两种长期来源默认关闭。只有成员明确要调整长期用途时，才按来源询问并提交。`demands` 对应本人新提交的需求分类。`interactions` 对应本人对邀请的接受或拒绝，以及对俱乐部回应选的反馈。Agent 私聊、群聊原文和回应原文留在各自用途下。
+
+先用 `get-profile` 读取后台当前设置，`profileSource: cache` 时向成员说明还需联网读取。确认本次要开启或关闭的来源后，用 `set-modeling-consent --confirmed --source demands|interactions --enable|--disable --base-revision …`，版本取 `modeling[来源].revision`。以返回的 `consent` 确认设置。关闭来源会移除已登记输入。遇到 `modeling_consent_changed` 时重新读取，再请成员确认。
 
 ## 离线提交与撤回
 

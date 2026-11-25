@@ -109,6 +109,23 @@ impl ProfileCache {
         Ok(result)
     }
 
+    pub fn set_modeling_consent(
+        &mut self,
+        api: &Api,
+        session: &Session,
+        body: &Value,
+    ) -> ApiResult {
+        let result = api.set_modeling_consent(&session.token, body)?;
+        let profile = result
+            .get("profile")
+            .filter(|profile| profile.is_object())
+            .ok_or_else(Failure::invalid_response)?;
+        self.edit(&account_key(api, session), |account| {
+            account.confirmed = Some(profile.clone())
+        })?;
+        Ok(result)
+    }
+
     pub fn status(&self, api: &Api, session: &Session) -> Value {
         let key = account_key(api, session);
         let account = self.accounts.get(&key);

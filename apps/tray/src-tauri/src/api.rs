@@ -78,6 +78,8 @@ impl Failure {
             (StatusCode::CONFLICT, "profile_conflict") => {
                 "资料已更新，请比较当前值和你的编辑后选择。"
             }
+            (StatusCode::CONFLICT, "modeling_consent_changed") => "建模授权已更新，请刷新后确认。",
+            (StatusCode::CONFLICT, "response_feedback_changed") => "回应反馈已更新，请刷新后再操作。",
             (StatusCode::CONFLICT, "idempotency_conflict") => {
                 "这次提交与原确认单不同，请重新确认后提交。"
             }
@@ -340,11 +342,21 @@ impl Api {
         self.get(&["demands", demand_id, "responses"], &[], token)
     }
 
-    pub fn feedback_response(&self, token: &str, response_id: &str, feedback: &str) -> ApiResult {
+    pub fn feedback_response(
+        &self,
+        token: &str,
+        response_id: &str,
+        feedback: &str,
+        expected_updated_at: Option<&str>,
+    ) -> ApiResult {
+        let mut body = json!({ "feedback": feedback });
+        if let Some(stamp) = expected_updated_at {
+            body["expectedUpdatedAt"] = json!(stamp);
+        }
         self.write(
             Method::POST,
             &["responses", response_id, "feedback"],
-            Some(&json!({ "feedback": feedback })),
+            Some(&body),
             Some(token),
         )
     }
@@ -413,6 +425,10 @@ impl Api {
 
     pub fn get_profile(&self, token: &str) -> ApiResult {
         self.get(&["profile"], &[], token)
+    }
+
+    pub fn set_modeling_consent(&self, token: &str, body: &Value) -> ApiResult {
+        self.write(Method::PATCH, &["profile", "modeling"], Some(body), Some(token))
     }
 }
 

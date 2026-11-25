@@ -133,6 +133,13 @@ def parse_arguments():
     profile_fields.add_argument("--mutation-id", dest="mutationId", required=True, type=required_text)
     profile_fields.add_argument("--changes-json", dest="changes", required=True, type=json_object)
     command("get-profile", "Read your profile.")
+    modeling = command("set-modeling-consent", "Set your confirmed long-term modeling consent.")
+    modeling.add_argument("--confirmed", action="store_true", required=True)
+    modeling.add_argument("--source", choices=("demands", "interactions"), required=True)
+    modeling.add_argument("--base-revision", dest="baseRevision", type=int, required=True)
+    choice = modeling.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--enable", dest="enabled", action="store_true")
+    choice.add_argument("--disable", dest="enabled", action="store_false")
     command("profile-sync-status", "Check cached profile, draft and confirmed edits on this device.")
     command("save-profile-draft", "Keep unconfirmed edits on this device.").add_argument(
         "--changes-json", dest="changes", required=True, type=json_object)

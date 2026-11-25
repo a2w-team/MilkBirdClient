@@ -579,12 +579,12 @@ function renderDetail() {
     if (!resp.feedback) {
       cardActions.append(
         makeButton('有用', async () => {
-          await invoke('feedback_response', { responseId: resp.id, feedback: 'useful' })
+          await invoke('feedback_response', { responseId: resp.id, feedback: 'useful', expectedUpdatedAt: resp.updatedAt })
           await loadDemandResponses(demand.id)
           renderDetail()
         }, 'btn compact'),
         makeButton('不合适', async () => {
-          await invoke('feedback_response', { responseId: resp.id, feedback: 'dismissed' })
+          await invoke('feedback_response', { responseId: resp.id, feedback: 'dismissed', expectedUpdatedAt: resp.updatedAt })
           await loadDemandResponses(demand.id)
           renderDetail()
         }, 'btn-quiet')
@@ -593,7 +593,7 @@ function renderDetail() {
       cardActions.append(
         node('span', resp.feedback === 'useful' ? '有用' : '不合适', resp.feedback === 'useful' ? 'pill ok' : 'pill'),
         makeButton('撤销', async () => {
-          await invoke('feedback_response', { responseId: resp.id, feedback: '' })
+          await invoke('feedback_response', { responseId: resp.id, feedback: '', expectedUpdatedAt: resp.updatedAt })
           await loadDemandResponses(demand.id)
           renderDetail()
         }, 'btn-quiet')

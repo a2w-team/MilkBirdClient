@@ -126,9 +126,10 @@ async fn feedback_response(
     state: State<'_, Arc<Hub>>,
     response_id: String,
     feedback: String,
+    expected_updated_at: Option<String>,
 ) -> ApiResult {
     blocking(state, move |hub| {
-        hub.feedback_response(&response_id, &feedback)
+        hub.feedback_response(&response_id, &feedback, expected_updated_at.as_deref())
     })
     .await
 }

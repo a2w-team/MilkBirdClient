@@ -42,12 +42,17 @@
     "acceptedMatchCount": 2,
     "roomMessageCount": 14,
     "recentCategories": ["dining", "sports"],
-    "summary": "近期在东校区活跃，常发起 dining 需求，参与临时群聊互动 14 条。",
+    "modelingCategories": [],
+    "summary": "已提交 3 条需求，同意 2 次匹配，发送 14 条群消息。",
     "updatedAt": "2026-11-23T12:05:00Z"
+  },
+  "modeling": {
+    "demands": {"enabled": false, "revision": 0},
+    "interactions": {"enabled": false, "revision": 0}
   }
 }
 ```
-> 平台在成员提交需求、响应匹配、在临时群发消息时自动增量更新 `cloudProfile`（首版规则归纳，后续可替换为 LLM 摘要）。
+活动计数和 `recentCategories` 是本人活动记录。`modelingCategories` 只列出获准用于长期建模的有效需求分类。`PATCH /api/v1/profile/modeling` 接受 `{source, enabled, baseRevision}`。来源为 `demands` 或 `interactions`，均默认关闭。版本取 `modeling[来源].revision`。成功回复 `{consent, profile}`，过期设置返回 `409 modeling_consent_changed`。关闭清除该来源的已登记输入，再次开启只登记新活动。
 
 ---
 
@@ -113,7 +118,7 @@
 - `POST /api/v1/demands/:id/cancel` → 仅本人可操作；将需求置为 `cancelled`，同时将关联 `pending` 匹配置为 `cancelled` 并通知各方；返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/withdraw-submission` 接受原提交的 `{idempotencyKey}`。已创建需求时按同样规则撤回并返回 `{demand}`。需求尚未创建时返回 `{demand: null}` 并记录撤回。当前账号随后使用该键的新建提交返回 `409 demand_submission_withdrawn`。
 
-提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。`profileFields` 将用户明确选中的长期字段映射到 `localProfile.fieldVersions[字段名].version`，例如 `{"preferences.food":2}`。用户明确选中的推断标签用 `inferredTags`，并带上 `cloudProfile.updatedAt` 作为 `cloudVersion`。两个来源均通过 `GET /api/v1/profile` 读取。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。所选字段被改动或删除，或所选标签的来源版本变化时，返回 `409 match_profile_changed`。同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
+提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。`profileFields` 将用户明确选中的长期字段映射到 `localProfile.fieldVersions[字段名].version`，例如 `{"preferences.food":2}`。用户从 `cloudProfile.modelingCategories` 明确选中的标签用 `inferredTags`，并带上 `cloudProfile.updatedAt` 作为 `cloudVersion`。从 `GET /api/v1/profile` 读取。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。所选字段被改动或删除、标签失效或来源版本变化时返回 `409 match_profile_changed`。同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
 
 ### 2.3 修改需求与查询版本历史
 
@@ -127,6 +132,7 @@
 - `GET /api/v1/demands/:id/responses` → `200 {"responses": [...]}`。托盘识别 `kind` 为 `link`、`richtext` 或 `html_card` 的回应，分别使用 `url`、`content` 或 `html` 展示内容。通知使用 `title`、`source` 和 `why`（缺省时读取 `summary`）。
 - 已撤回或已过期的开放需求返回 `409 demand_not_open`，托盘清除该需求缓存的回应。事件流可跳过失效记录，托盘使用回执 `lastSeq` 推进游标。
 - `POST /api/v1/responses/:id/feedback` → 提交对指定回应的反馈。托盘发送 `{"feedback": "useful"}` 标记有用、`{"feedback": "dismissed"}` 标记不合适，或发送 `{"feedback": ""}` 撤销标记。
+- `expectedUpdatedAt` 取该回应的 `updatedAt`。当前反馈被其他设备改动后，用旧版本更改反馈返回 `409 response_feedback_changed`。互动来源开启时，只登记带版本的新反馈选择。
 
 ---
 

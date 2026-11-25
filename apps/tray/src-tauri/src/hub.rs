@@ -620,6 +620,12 @@ impl Hub {
         })
     }
 
+    pub fn set_modeling_consent(&self, body: &Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.set_modeling_consent(api, session, body)
+        })
+    }
+
     pub fn profile_sync_status(&self) -> ApiResult {
         self.profile_action(false, |outbox, api, session| {
             Ok(outbox.profiles.status(api, session))
@@ -780,8 +786,15 @@ impl Hub {
         self.refresh_after(|api, token| api.complete_demand(token, id))
     }
 
-    pub fn feedback_response(&self, response_id: &str, feedback: &str) -> ApiResult {
-        self.refresh_after(|api, token| api.feedback_response(token, response_id, feedback))
+    pub fn feedback_response(
+        &self,
+        response_id: &str,
+        feedback: &str,
+        expected_updated_at: Option<&str>,
+    ) -> ApiResult {
+        self.refresh_after(|api, token| {
+            api.feedback_response(token, response_id, feedback, expected_updated_at)
+        })
     }
 
     pub fn vote_room_retention(&self, room_id: &str, keep: bool) -> ApiResult {

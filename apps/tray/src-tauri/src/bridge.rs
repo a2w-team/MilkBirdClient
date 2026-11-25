@@ -134,6 +134,16 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
             hub.edit_profile_fields(body)
         }
         "get_profile" => hub.get_profile(),
+        "set_modeling_consent" => {
+            if payload["confirmed"] != true {
+                return Err(Failure::confirmation_required());
+            }
+            let mut body = payload;
+            body.as_object_mut()
+                .expect("confirmed field implies object")
+                .remove("confirmed");
+            hub.set_modeling_consent(&body)
+        }
         "profile_sync_status" => hub.profile_sync_status(),
         "save_profile_draft" => hub.save_profile_draft(payload["changes"].clone()),
         "discard_profile_draft" => hub.discard_profile_draft(),
