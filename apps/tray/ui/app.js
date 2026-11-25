@@ -81,7 +81,10 @@ function memberName(member) {
 }
 
 function formatReason(raw) {
-  const map = { same_category_and_campus: '同校区 · 时间相容' }
+  const map = {
+    same_category_and_campus: '同校区 · 时间相容',
+    ranked_member_request: '符合推荐条件'
+  }
   return map[raw] || raw || ''
 }
 

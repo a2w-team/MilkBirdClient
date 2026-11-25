@@ -35,6 +35,13 @@ disable-model-invocation: true
 
 向用户只汇报结果与眼下可做的操作。隐藏本机通信、协议、调试输出和内部 ID。
 
+## 自动推荐
+
+- 用户希望后台自动推送一条推荐时，将投递方式、预算上限、优先校区和[单次匹配授权](#单次匹配授权)一起列入需求确认卡。二手需求使用 `--category secondhand`。卡片获确认后，给 `--preferences-json` 加入 `"fulfillment":"ranked"`，例如 `{"fulfillment":"ranked","budgetMax":250000,"preferredCampus":"东校区"}`。`budgetMax` 用人民币分，250000 表示不超过 2500 元。只把确认为优先项的校区传为 `preferredCampus`。
+- 自动推荐仍需填写 `--campus`。用户只确认了优先校区时，两个字段可填同一个校区。此模式把校区用于排序加分。用户要求限定校区时，先确认能否接受跨校区候选，再决定是否选择自动推荐。
+- 用 `get-recommendation --id …` 查轮次。`no_candidate` 时告知暂无合格项及回执的下次检查时间。用户要求立即重查时用 `recheck-recommendation --id …`。`waiting_operator` 表示正在等待运营确认。投递后用 `list-responses` 或 `list-matches` 读取实际结果。
+- 用户只要预览时，用 `rank-demand --id …` 查看已有授权需求的候选。尚无授权需求时，先展示本机需求草稿。只有确认卡明确选择自动推荐时才提交 `"fulfillment":"ranked"`。
+
 ## 单次匹配授权
 
 本节适用于所有新需求。考试查询用 `--category info`，考试主题作为 `--title`。

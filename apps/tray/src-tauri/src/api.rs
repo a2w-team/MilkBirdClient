@@ -337,6 +337,19 @@ impl Api {
         self.get(&["demands", id, "candidates"], &[], token)
     }
 
+    pub fn get_recommendation(&self, token: &str, id: &str) -> ApiResult {
+        self.get(&["demands", id, "recommendation"], &[], token)
+    }
+
+    pub fn recheck_recommendation(&self, token: &str, id: &str) -> ApiResult {
+        self.write(
+            Method::POST,
+            &["demands", id, "recommendation", "recheck"],
+            None,
+            Some(token),
+        )
+    }
+
     pub fn cancel_demand(&self, token: &str, id: &str) -> ApiResult {
         self.write(Method::POST, &["demands", id, "cancel"], None, Some(token))
     }
