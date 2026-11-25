@@ -19,10 +19,12 @@ use tauri::{
 };
 
 const TRAY_ID: &str = "a2w";
+const DEFAULT_EMAIL_DOMAINS: &str = "hkust-gz.edu.cn,connect.hkust-gz.edu.cn";
 
 struct TraySettings {
     title: String,
     window_offset_x: Option<i32>,
+    email_domains: Vec<String>,
 }
 
 impl TraySettings {
@@ -32,8 +34,36 @@ impl TraySettings {
             window_offset_x: std::env::var("MILKBIRD_WINDOW_OFFSET_X")
                 .ok()
                 .and_then(|offset| offset.trim().parse().ok()),
+            email_domains: login_domains(
+                &std::env::var("MILKBIRD_ALLOWED_EMAIL_DOMAINS").unwrap_or_default(),
+            ),
         }
     }
+}
+
+fn login_domains(config: &str) -> Vec<String> {
+    let mut domains = Vec::new();
+    for domain in config.split(',') {
+        let domain = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+        if domain.len() <= 253
+            && domain.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+            && !domains.contains(&domain)
+        {
+            domains.push(domain);
+        }
+    }
+    if domains.is_empty() {
+        domains.extend(DEFAULT_EMAIL_DOMAINS.split(',').map(str::to_owned));
+    }
+    domains
 }
 
 async fn blocking<T: Send + 'static>(
@@ -49,6 +79,11 @@ async fn blocking<T: Send + 'static>(
 #[tauri::command]
 fn get_bootstrap(state: State<'_, Arc<Hub>>) -> Bootstrap {
     state.bootstrap()
+}
+
+#[tauri::command]
+fn get_login_domains(settings: State<'_, TraySettings>) -> Vec<String> {
+    settings.email_domains.clone()
 }
 
 #[tauri::command]
@@ -405,6 +440,7 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_bootstrap,
+            get_login_domains,
             request_email_code,
             verify_email_code,
             logout,
@@ -510,7 +546,19 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{main_window_x, toast_window_pos};
+    use super::{login_domains, main_window_x, toast_window_pos};
+
+    #[test]
+    fn login_domains_normalize_validate_and_preserve_order() {
+        assert_eq!(
+            login_domains(" .EXAMPLE.EDU , campus.example.edu, example.edu, -, foo..edu, @foo.edu"),
+            ["example.edu", "campus.example.edu"]
+        );
+        assert_eq!(
+            login_domains(" , https://example.edu"),
+            ["hkust-gz.edu.cn", "connect.hkust-gz.edu.cn"]
+        );
+    }
 
     #[test]
     fn main_window_offset_uses_work_area() {
