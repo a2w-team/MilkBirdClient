@@ -69,6 +69,10 @@ impl Failure {
             }
             (StatusCode::CONFLICT, "room_expired") => "这个临时群已到期。",
             (StatusCode::CONFLICT, "demand_not_open") => "这条需求已结束，无法继续接收回应。",
+            (StatusCode::CONFLICT, "matching_authorization_required") => "请先确认本次匹配授权。",
+            (StatusCode::BAD_REQUEST, "invalid_ranking_constraints") => {
+                "预算上限须为非负整数人民币分。"
+            }
             (StatusCode::CONFLICT, "demand_submission_withdrawn") => {
                 "这次提交已撤回，请重新确认后发起新需求。"
             }
@@ -327,6 +331,10 @@ impl Api {
 
     pub fn get_demand(&self, token: &str, id: &str) -> ApiResult {
         self.get(&["demands", id], &[], token)
+    }
+
+    pub fn rank_demand(&self, token: &str, id: &str) -> ApiResult {
+        self.get(&["demands", id, "candidates"], &[], token)
     }
 
     pub fn cancel_demand(&self, token: &str, id: &str) -> ApiResult {
