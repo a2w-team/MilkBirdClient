@@ -1,0 +1,4 @@
+.DS_Store
+apps/tray/src-tauri/target/
+apps/tray/src-tauri/gen/
+__pycache__/

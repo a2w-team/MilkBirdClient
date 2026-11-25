@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>a2w 通知</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="toast.js" defer></script>
+  </head>
+  <body class="toast-body">
+    <div id="toast-card" class="toast-card">
+      <div class="toast-accent" aria-hidden="true"></div>
+      <div class="toast-main">
+        <div class="toast-header">
+          <span class="toast-app">
+            <span class="toast-mark">a2w</span>
+          </span>
+          <button id="toast-close" type="button" class="toast-close" aria-label="关闭通知" title="关闭">×</button>
+        </div>
+        <button id="toast-open" type="button" class="toast-trigger">
+          <strong id="toast-title">a2w</strong>
+          <span id="toast-body"></span>
+        </button>
+      </div>
+    </div>
+  </body>
+</html>
