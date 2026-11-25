@@ -147,6 +147,16 @@
           <summary>条件详情</summary>
           <div id="detail-spec" class="spec-rows"></div>
         </details>
+        <section id="detail-recommendations" class="spec-box recommendation-panel" aria-labelledby="recommendation-title" hidden>
+          <h3 id="recommendation-title">推荐候选</h3>
+          <p id="recommendation-status" class="muted" role="status" hidden></p>
+          <div class="card-actions">
+            <button id="candidate-preview" type="button" class="btn compact">预览候选</button>
+            <button id="recommendation-refresh" type="button" class="btn compact" hidden>刷新状态</button>
+            <button id="recommendation-recheck" type="button" class="btn compact" hidden>重查候选</button>
+          </div>
+          <div id="recommendation-candidates" class="spec-rows" aria-live="polite" hidden></div>
+        </section>
         <div id="detail-responses" class="card-list"></div>
       </section>
 

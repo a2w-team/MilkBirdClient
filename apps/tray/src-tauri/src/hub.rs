@@ -309,13 +309,29 @@ impl Runtime {
             others += 1;
             other_title = other_title.or_else(|| string_field(participant, "demandTitle"));
         }
-        let title = other_title.map_or_else(
-            || "找到合适的搭子了".into(),
-            |title| format!("{others} 位同学想一起：{title}"),
-        );
+        let (title, body) = if matches!(
+            item["reason"].as_str(),
+            Some("ranked_peer" | "ranked_member_request")
+        ) {
+            (
+                other_title.map_or_else(
+                    || "收到成员推荐".into(),
+                    |title| format!("收到成员推荐：{title}"),
+                ),
+                "符合推荐条件 · 双方同意后开 24 小时临时群",
+            )
+        } else {
+            (
+                other_title.map_or_else(
+                    || "找到合适的搭子了".into(),
+                    |title| format!("{others} 位同学想一起：{title}"),
+                ),
+                "同校区相容 · 全部同意后开 24 小时临时群",
+            )
+        };
         self.notify_response(
             &title,
-            "同校区相容 · 全部同意后开 24 小时临时群",
+            body,
             Target {
                 demand_id,
                 match_id,

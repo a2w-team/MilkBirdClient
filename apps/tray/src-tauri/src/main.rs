@@ -175,6 +175,30 @@ async fn cancel_demand(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResu
 }
 
 #[tauri::command]
+async fn rank_demand(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
+    blocking(state, move |hub| {
+        hub.with_api(|api, token| api.rank_demand(token, &demand_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_recommendation(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
+    blocking(state, move |hub| {
+        hub.with_api(|api, token| api.get_recommendation(token, &demand_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn recheck_recommendation(state: State<'_, Arc<Hub>>, demand_id: String) -> ApiResult {
+    blocking(state, move |hub| {
+        hub.with_api(|api, token| api.recheck_recommendation(token, &demand_id))
+    })
+    .await
+}
+
+#[tauri::command]
 async fn list_submissions(state: State<'_, Arc<Hub>>) -> ApiResult {
     blocking(state, Hub::list_submissions).await
 }
@@ -560,6 +584,9 @@ fn main() {
             list_demands,
             complete_demand,
             cancel_demand,
+            rank_demand,
+            get_recommendation,
+            recheck_recommendation,
             list_submissions,
             withdraw_submission,
             list_demand_revisions,

@@ -95,6 +95,12 @@ def parse_arguments():
         "--idempotency-key", dest="idempotencyKey", type=required_text, required=True)
     command("get-demand", "Get a demand and its match authorization status.").add_argument(
         "--id", dest="demandId", type=required_text, required=True)
+    command("rank-demand", "Preview eligible candidates for an authorized demand.").add_argument(
+        "--id", dest="demandId", type=required_text, required=True)
+    command("get-recommendation", "Read your demand's recommendation status.").add_argument(
+        "--id", dest="demandId", type=required_text, required=True)
+    command("recheck-recommendation", "Retry the automatic search for a demand.").add_argument(
+        "--id", dest="demandId", type=required_text, required=True)
     command("cancel-demand", "Cancel an open demand.").add_argument(
         "--id", dest="demandId", type=required_text, required=True)
     command("complete-demand", "Complete a demand and free an active slot.").add_argument(

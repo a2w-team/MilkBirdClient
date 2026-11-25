@@ -81,7 +81,7 @@
     "end": "2026-11-23T21:00:00Z"
   },
   "partySize": {"min": 2, "max": 4},
-  "preferences": {"food": "火锅", "budget": "80以内"},
+  "preferences": {"food": "火锅", "budgetMax": 8000, "preferredCampus": "东校区"},
   "expiresAt": "2026-11-23T21:00:00Z"
 }
 ```
@@ -109,7 +109,7 @@
     "location": "南门",
     "timeWindow": {"start": "2026-11-23T18:30:00Z", "end": "2026-11-23T21:00:00Z"},
     "partySize": {"min": 2, "max": 4},
-    "preferences": {"food": "火锅", "budget": "80以内"},
+    "preferences": {"food": "火锅", "budgetMax": 8000, "preferredCampus": "东校区"},
     "status": "open",
     "expiresAt": "2026-11-23T21:00:00Z",
     "createdAt": "2026-11-23T12:00:00Z"
@@ -130,6 +130,10 @@
 ### 2.3 修改需求与查询版本历史
 
 - `PATCH /api/v1/demands/:id` → 更新本人的进行中需求。只提交需要变更的字段，可用字段为 `title`、`summary`、`campus`、`location`、`timeWindow`、`partySize`、`preferences` 和 `expiresAt`，可附 `changeNote` 记录变更说明。时间区间用 `{start, end}`，人数范围用 `{min, max}`。成功返回 `200 {"demand": {...}, "matches": [...]}`。需求状态已不可修改时返回 `409 demand_not_editable`。
+- `GET /api/v1/demands/:id/candidates` → 预览本人的已授权需求排序，托盘工具命令为 `rank-demand --id <需求 ID>`。确认预算时用 `preferences.budgetMax`，确认候选价格时用 `preferences.price`，金额均为非负整数人民币分。`preferences.preferredCampus` 为可选的优先校区。返回 `{strategyVersion, candidates}`，候选含 `kind`（`info` 或 `peer`）、`id`、`title`、`campus`、`source`、`score`、`reasons` 和可选的 `price`。信息池条目可返回公开出处 `url`。
+- 需求确认卡选择自动推荐时，经确认后用 `--preferences-json` 下发 `{"fulfillment":"ranked"}`，同时带 `--single-match`、截止时间和幂等键。候选作为一条链接回应或需要双方同意的匹配邀请异步到达。
+- `GET /api/v1/demands/:id/recommendation` → 使用 `get-recommendation --id <需求 ID>` 读取轮次状态。`POST /api/v1/demands/:id/recommendation/recheck` → 使用 `recheck-recommendation --id <需求 ID>` 立即重查自动轮次。两者均返回 `{recommendation}`，其中 `status` 为 `pending`、`no_candidate`、`waiting_operator`、`delivered` 或 `closed`。没有候选时可提供下次检查时间 `nextCheckAt`。
+- 人工确认的链接回应可带编辑后的 `why`。成员邀请的 `why` 仅随发起需求成员的匹配和事件返回。
 - `GET /api/v1/demands/:id/revisions` → 查询指定需求的版本历史，返回 `200 {"revisions": [...]}`。
 
 已经签发单次匹配授权的需求修改时返回 `409 demand_not_editable`。请先撤回，再用新确认单提交。

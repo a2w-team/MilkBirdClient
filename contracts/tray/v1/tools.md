@@ -39,6 +39,9 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 | `update_demand` | `{confirmed: true, demandId, title?, summary?, campus?, location?, timeWindow?, partySize?, preferences?, expiresAt?, changeNote?}` | 校验确认和登录；将变更字段转发至 `PATCH /api/v1/demands/:id`，返回 `{demand, matches}`。成功后刷新列表，有匹配时触发托盘提醒 |
 | `list_demands` | `{status?}` | 转发 `GET /api/v1/demands`，返回 `{demands}` |
 | `get_demand` | `{demandId}` | 转发 `GET /api/v1/demands/:id`，返回 `{demand}` 及其授权状态 |
+| `rank_demand` | `{demandId}` | 只读预览本人已有单次授权的需求候选，返回 `{strategyVersion, candidates}` |
+| `get_recommendation` | `{demandId}` | 查询明确开启自动推荐的需求，返回 `{recommendation}` |
+| `recheck_recommendation` | `{demandId}` | 给本人已确认自动推荐的有效需求安排重查，返回 `{recommendation}` |
 | `cancel_demand` | `{demandId}` | 转发 `POST /api/v1/demands/:id/cancel`，返回 `{demand}` |
 | `complete_demand` | `{demandId}` | 转发 `POST /api/v1/demands/:id/complete`，返回 `{demand}`，释放活跃名额 |
 | `list_demand_revisions` | `{demandId}` | 转发 `GET /api/v1/demands/:id/revisions`，返回 `{revisions}` |
