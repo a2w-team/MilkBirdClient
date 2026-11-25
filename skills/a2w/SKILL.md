@@ -26,7 +26,7 @@ disable-model-invocation: true
 1. 按[需求确认规则](references/demand-confirmation.md)在本机提供可选建议，只追问缺失或含糊的关键条件，例如做什么、校区或地点、时间和人数。多人需求要确认人数范围，用 `--party-min` 和 `--party-max` 提交。固定人数时两个值填一样。
 2. 整理一张简短需求卡片，列出活动、地点、时间、人数与用户想共享的条件。请用户确认这张卡片。字段修改后重新确认，提交参数以最后一次确认的卡片为准。
 3. 用户确认后运行 `submit-demand --confirmed --category … --title … --campus …`，按确认内容补充 `--summary`、`--location`、`--start`、`--end`、`--party-min`、`--party-max` 和 `--preferences-json`。时间用带时区的 RFC 3339。为同一次已确认需求保留一个 `--idempotency-key`，请求超时需要重试时复用该值。
-4. 简短告知需求已挂起或有匹配。每人最多同时挂起 3 个活跃需求。用 `list-demands` 查看已有需求，用户确认某条已搞定后，用 `complete-demand --id …` 释放一个槽位。用户想撤回时，用 `cancel-demand --id …`。
+4. 按[离线提交与撤回](#离线提交与撤回)区分俱乐部回执和本机排队回执。每人最多同时挂起 3 个活跃需求。用 `list-demands` 查看俱乐部已收到的需求，用户确认某条已搞定后，用 `complete-demand --id …` 释放一个槽位。撤回已有需求 ID 的需求用 `cancel-demand --id …`。
 5. 用 `list-responses --demand-id …` 查看指定需求的回应，转述与用户有关的结果。用 `list-matches` 查看匹配。用户明确同意或暂不接受某条匹配时，用 `respond-match --id … --decision accept|decline`。
 6. 有临时群后，用 `open-room --id …` 打开群聊。已知关联需求时加上 `--demand-id …`，需要查找群聊时先用 `list-rooms`。临时群默认保留 24 小时。用户明确表达是否保留群聊后，用 `vote-retention --room-id … --keep` 或 `vote-retention --room-id … --no-keep` 提交其投票。
 7. 用户明确要求把指定字段保存到俱乐部资料时，用 `sync-profile` 提交获准的 `--campus`、`--bio` 或 `--preferences-json`。必要时用 `get-profile` 查看俱乐部记录。两项操作都遵循[需求确认规则](references/demand-confirmation.md)中的资料边界。
