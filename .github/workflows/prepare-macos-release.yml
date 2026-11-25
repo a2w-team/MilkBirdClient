@@ -1,0 +1,99 @@
+name: Prepare macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag matching the app version, such as v0.1.0
+        required: true
+        type: string
+
+concurrency:
+  group: prepare-milkbird-macos-release
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    if: github.repository == 'a2w-team/MilkBirdClient' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    environment: macos-release
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RUSTUP_TOOLCHAIN: 1.90.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify source and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          app_version="$(python3 -c 'import json; print(json.load(open("apps/tray/src-tauri/tauri.conf.json"))["version"])')"
+          test "$RELEASE_TAG" = "v$app_version"
+          existing="$(git ls-remote --tags "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG")"
+          test -z "$existing"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target aarch64-apple-darwin
+          cargo test --locked --manifest-path apps/tray/src-tauri/Cargo.toml
+          python3 -m unittest discover -s apps/tray/install/tests
+          node --test apps/tray/tests/recommendations.test.cjs
+      - name: Build and verify a signed macOS disk image
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_SIGNING_IDENTITY:?}" "${APPLE_CERTIFICATE:?}" "${APPLE_CERTIFICATE_PASSWORD:?}"
+          : "${APPLE_API_ISSUER:?}" "${APPLE_API_KEY:?}" "${APPLE_API_KEY_P8_BASE64:?}"
+          [[ "$APPLE_SIGNING_IDENTITY" == "Developer ID Application:"* ]]
+          umask 077
+          secret_dir="$(mktemp -d "$RUNNER_TEMP/milkbird-signing.XXXXXX")"
+          keychain="$secret_dir/signing.keychain-db"
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            rm -f "$secret_dir/certificate.p12" "$secret_dir/notary.p8"
+            rmdir "$secret_dir" || true
+          }
+          trap cleanup EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$secret_dir/certificate.p12"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$secret_dir/notary.p8"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security import "$secret_dir/certificate.p12" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security find-identity -v -p codesigning "$keychain" | grep -F -- "$APPLE_SIGNING_IDENTITY" >/dev/null
+          export APPLE_API_KEY_PATH="$secret_dir/notary.p8"
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_P8_BASE64
+          (
+            cd apps/tray
+            npm exec --yes --package @tauri-apps/cli@2.12.3 -- tauri build \
+              --target aarch64-apple-darwin --bundles app -- --locked
+          )
+          python3 apps/tray/install/prepare_macos_release.py \
+            --app "apps/tray/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/MilkBird Tray.app" \
+            --tag "$RELEASE_TAG" --out "$RUNNER_TEMP/milkbird-release"
+      - name: Upload verified assets to an unpublished release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets="$RUNNER_TEMP/milkbird-release"
+          gh release create "$RELEASE_TAG" \
+            "$assets/MilkBird-Tray_${RELEASE_TAG#v}_arm64.dmg" "$assets/install-manifest.json" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --generate-notes
