@@ -21,3 +21,9 @@
 
 4. **开始使用**
    在你的 Agent 会话中输入 `/a2w` 激活，随后直接描述校园需求（例如找运动/拼车/吃饭搭子），Agent 会先整理需求卡片经你确认后再提交到托盘。
+
+## 校园私人助理
+
+把完整的 [skills/campus-assistant/](skills/campus-assistant/) 目录复制到项目的 `.agents/skills/campus-assistant`。应用包也提供同一份 Skill，位于 `Contents/Resources/skills/campus-assistant/`。然后在该项目的 Agent 对话直接说「查今天的课表」或「帮我约明天下午 3 点到 4 点的演示会议室 A」。
+
+首次使用时在托盘的「校园私人助理」连接对应服务。当前开发预览支持[模拟账号](README.md#试用校园私人助理)。真实服务的授权和操作以校方接口为准。

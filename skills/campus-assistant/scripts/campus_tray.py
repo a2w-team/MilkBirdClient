@@ -12,6 +12,7 @@ BRIDGE_ACTION = "campus_assistant"
 MAX_FRAME = 32 * 1024
 BOOKING_SERVICES = ("swimming", "meeting-room")
 SERVICES = ("mail", "timetable", *BOOKING_SERVICES)
+DEMO_ACCOUNTS = ("student", "staff")
 
 
 class Parser(argparse.ArgumentParser):
@@ -45,7 +46,7 @@ def parse_arguments():
     command("status", "Check campus service connections.")
     connect = command("connect", "Connect a campus service.")
     connect.add_argument("--service", choices=SERVICES, required=True)
-    connect.add_argument("--account", choices=("student", "staff"), help="Demo account role.")
+    connect.add_argument("--account", choices=DEMO_ACCOUNTS, help="Demo account role.")
     command("disconnect", "Disconnect a campus service.").add_argument(
         "--service", choices=SERVICES, required=True
     )
@@ -61,10 +62,19 @@ def parse_arguments():
     command("bookings", "List the account's bookings.").add_argument(
         "--service", choices=BOOKING_SERVICES, required=True
     )
-    book = command("prepare-booking", "Preview a particular booking.")
-    book.add_argument("--service", choices=BOOKING_SERVICES, required=True)
-    book.add_argument("--date", type=calendar_date, required=True)
-    book.add_argument("--slot-id", dest="slotId", type=required_text, required=True)
+    preview = command("prepare-booking", "Preview a particular booking.")
+    book = command("book", "Book an exact slot the user explicitly requested.")
+    for booking in (preview, book):
+        booking.add_argument("--service", choices=BOOKING_SERVICES, required=True)
+        booking.add_argument("--date", type=calendar_date, required=True)
+        booking.add_argument("--slot-id", dest="slotId", type=required_text, required=True)
+    book.add_argument(
+        "--expected-account", dest="expectedAccount", choices=DEMO_ACCOUNTS,
+        help="Account returned with the available slots.",
+    )
+    book.add_argument(
+        "--confirmed", action="store_true", required=True, help="The user explicitly requested this booking."
+    )
     cancel = command("prepare-cancellation", "Preview cancellation of an existing booking.")
     cancel.add_argument("--service", choices=BOOKING_SERVICES, required=True)
     cancel.add_argument("--booking-id", dest="bookingId", type=required_text, required=True)

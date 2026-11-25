@@ -48,6 +48,8 @@ def main():
             try:
                 print(f"MilkBird Mock · {origin}", flush=True)
                 print(f"使用任意校园邮箱名，获取验证码后输入 {CODE}。按 Ctrl+C 退出。", flush=True)
+                if env.get("MILKBIRD_CAMPUS_DEMO") == "1":
+                    print(f"启动 Agent 前在其终端设置环境变量\nexport MILKBIRD_TRAY_DIR={session_dir}", flush=True)
                 return run_tray(command, env)
             finally:
                 hub.shutdown()

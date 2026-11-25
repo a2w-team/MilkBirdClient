@@ -80,14 +80,11 @@ enum Account {
 }
 
 impl Account {
-    fn parse(payload: &Value) -> ApiResult<Self> {
-        match payload.get("account") {
-            None => Ok(Self::Student),
-            Some(account) => match account.as_str() {
-                Some("student") => Ok(Self::Student),
-                Some("staff") => Ok(Self::Staff),
-                _ => Err(invalid("请选择 student 或 staff 演示身份。")),
-            },
+    fn parse(value: &Value) -> ApiResult<Self> {
+        match value.as_str() {
+            Some("student") => Ok(Self::Student),
+            Some("staff") => Ok(Self::Staff),
+            _ => Err(invalid("请选择 student 或 staff 演示身份。")),
         }
     }
 
@@ -195,6 +192,42 @@ impl DemoState {
         })
     }
 
+    fn reserve(&mut self, service: Service, account: Account, slot: &Slot) -> ApiResult<String> {
+        if !self.slot_available(service, &slot.id) {
+            return Err(slot_conflict());
+        }
+        let booking_id = self.next_id("booking");
+        self.bookings.push(Booking {
+            id: booking_id.clone(),
+            service,
+            slot: slot.clone(),
+            status: BookingStatus::Reserved,
+            account,
+        });
+        Ok(booking_id)
+    }
+
+    fn book(&mut self, service: Service, account: Account, slot: Slot) -> ApiResult<Receipt> {
+        let existing = self.bookings.iter().find(|booking| {
+            booking.service == service
+                && booking.account == account
+                && booking.slot.id == slot.id
+                && booking.status == BookingStatus::Reserved
+        });
+        let booking_id = match existing {
+            Some(booking) => booking.id.clone(),
+            None => self.reserve(service, account, &slot)?,
+        };
+        Ok(Receipt {
+            id: booking_id.clone(),
+            operation: Operation::Book,
+            service,
+            slot,
+            booking_id,
+            status: BookingStatus::Reserved,
+        })
+    }
+
     fn owned_reservation(&self, service: Service, account: Account, id: &str) -> ApiResult<usize> {
         self.bookings.iter().position(|booking| {
             booking.id == id
@@ -241,20 +274,10 @@ impl DemoState {
                 self.bookings[index].status = BookingStatus::Cancelled;
                 (booking_id.clone(), BookingStatus::Cancelled)
             }
-            None => {
-                if !self.slot_available(intent.service, &intent.slot.id) {
-                    return Err(slot_conflict());
-                }
-                let booking_id = self.next_id("booking");
-                self.bookings.push(Booking {
-                    id: booking_id.clone(),
-                    service: intent.service,
-                    slot: intent.slot.clone(),
-                    status: BookingStatus::Reserved,
-                    account: intent.account,
-                });
-                (booking_id, BookingStatus::Reserved)
-            }
+            None => (
+                self.reserve(intent.service, intent.account, &intent.slot)?,
+                BookingStatus::Reserved,
+            ),
         };
         let receipt = Receipt {
             id: intent.id,
@@ -294,6 +317,7 @@ impl CampusAssistant {
             "availability" => &["service", "date"],
             "prepare-booking" => &["service", "date", "slotId"],
             "prepare-cancellation" => &["service", "bookingId"],
+            "book" => &["service", "date", "slotId", "confirmed", "expectedAccount"],
             "confirm" => &["intentId", "confirmed"],
             _ => return Err(invalid("未知的校园助理操作。")),
         };
@@ -308,7 +332,8 @@ impl CampusAssistant {
             "status" => Ok(self.status(&state)),
             "connect" => {
                 let service = Service::parse(required_text(payload, "service")?)?;
-                let account = Account::parse(payload)?;
+                let account = payload.get("account").map(Account::parse)
+                    .transpose()?.unwrap_or(Account::Student);
                 if self.demo {
                     state.connect(service, account);
                 }
@@ -342,10 +367,13 @@ impl CampusAssistant {
                     }]
                 }))
             }
-            "availability" | "bookings" | "prepare-booking" | "prepare-cancellation" => {
+            "availability" | "bookings" | "prepare-booking" | "prepare-cancellation" | "book" => {
                 let service = Service::parse(required_text(payload, "service")?)?;
                 if !matches!(service, Service::Swimming | Service::MeetingRoom) {
                     return Err(invalid("请选择可预约场地的校园服务。"));
+                }
+                if action == "book" && payload["confirmed"] != true {
+                    return Err(Failure::confirmation_required());
                 }
                 let account = state.connected_account(service)?;
                 Self::booking_call(&mut state, action, payload, service, account)
@@ -397,7 +425,9 @@ impl CampusAssistant {
                 let date = required_date(payload)?;
                 let slots: Vec<_> = service.slots(date).into_iter()
                     .filter(|slot| state.slot_available(service, &slot.id)).collect();
-                Ok(json!({ "mode": "demo", "observedAt": observed_at(), "slots": slots }))
+                Ok(json!({
+                    "mode": "demo", "observedAt": observed_at(), "account": account, "slots": slots
+                }))
             }
             "bookings" => {
                 let bookings: Vec<_> = state.bookings.iter()
@@ -406,11 +436,8 @@ impl CampusAssistant {
                 Ok(json!({ "mode": "demo", "bookings": bookings }))
             }
             "prepare-booking" => {
-                let date = required_date(payload)?;
-                let slot_id = required_text(payload, "slotId")?;
-                let slot = service.slots(date).into_iter().find(|slot| slot.id == slot_id)
-                    .ok_or_else(|| invalid("请选择当天的有效场地时段。"))?;
-                if !state.slot_available(service, slot_id) {
+                let slot = requested_slot(service, payload)?;
+                if !state.slot_available(service, &slot.id) {
                     return Err(slot_conflict());
                 }
                 Ok(state.prepare(service, account, slot, None))
@@ -420,6 +447,17 @@ impl CampusAssistant {
                 let index = state.owned_reservation(service, account, booking_id)?;
                 let slot = state.bookings[index].slot.clone();
                 Ok(state.prepare(service, account, slot, Some(booking_id.to_owned())))
+            }
+            "book" => {
+                if let Some(expected) = payload.get("expectedAccount")
+                    && Account::parse(expected)? != account
+                {
+                    return Err(Failure::new(
+                        "campus_account_changed", "校园服务账号已切换，请重新查看可用时段。",
+                    ));
+                }
+                let receipt = state.book(service, account, requested_slot(service, payload)?)?;
+                Ok(json!({ "mode": "demo", "receipt": receipt }))
             }
             _ => unreachable!("booking action already checked"),
         }
@@ -457,6 +495,13 @@ fn demo_mail(account: Account, unread_only: bool) -> Value {
 
 fn campus_time(date: &str, hour_minute: &str) -> String {
     format!("{date}T{hour_minute}:00+08:00")
+}
+
+fn requested_slot(service: Service, payload: &Value) -> ApiResult<Slot> {
+    let date = required_date(payload)?;
+    let slot_id = required_text(payload, "slotId")?;
+    service.slots(date).into_iter().find(|slot| slot.id == slot_id)
+        .ok_or_else(|| invalid("请选择当天的有效场地时段。"))
 }
 
 fn observed_at() -> u64 {
@@ -564,6 +609,7 @@ mod tests {
             ("bookings", json!({ "service": "meeting-room" })),
             ("prepare-booking", json!({ "service": "swimming", "date": DATE, "slotId": "one" })),
             ("prepare-cancellation", json!({ "service": "meeting-room", "bookingId": "one" })),
+            ("book", json!({ "service": "meeting-room", "date": DATE, "slotId": "one", "confirmed": true })),
             ("confirm", json!({ "intentId": "one", "confirmed": true })),
         ] {
             assert_eq!(assistant.call(action, &payload).unwrap_err().code, "campus_authorization_required");
@@ -630,6 +676,67 @@ mod tests {
         assert_eq!(bookings(&assistant, id)["bookings"][0]["status"], "cancelled");
         let replacement = prepare_booking(&assistant, id);
         assert_eq!(replacement["slot"], first["slot"]);
+    }
+
+    #[test]
+    fn direct_booking_requires_an_authorized_exact_slot_and_is_idempotent() {
+        let assistant = CampusAssistant::new(true);
+        let id = "meeting-room";
+        let slot_id = format!("{id}-{DATE}-1");
+        let payload = json!({"service": id, "date": DATE, "slotId": slot_id, "confirmed": true});
+        assert_eq!(assistant.call("book", &payload).unwrap_err().code, "campus_authorization_required");
+        connect(&assistant, id, "student");
+
+        for rejected in [
+            json!({"service": id, "date": DATE, "slotId": slot_id}),
+            json!({"service": id, "date": DATE, "slotId": slot_id, "confirmed": false}),
+            json!({"service": id, "date": DATE, "slotId": slot_id, "confirmed": "true"}),
+        ] {
+            assert_eq!(assistant.call("book", &rejected).unwrap_err().code, "confirmation_required");
+        }
+        let mut wrong_date = payload.clone();
+        wrong_date["date"] = json!("2026-11-26");
+        assert_eq!(assistant.call("book", &wrong_date).unwrap_err().code, "campus_invalid_request");
+        assert_eq!(bookings(&assistant, id)["bookings"], json!([]));
+
+        let (receipt, duplicate) = std::thread::scope(|threads| {
+            let first = threads.spawn(|| assistant.call("book", &payload).unwrap());
+            let second = threads.spawn(|| assistant.call("book", &payload).unwrap());
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_eq!(receipt, duplicate);
+        assert_eq!(receipt["mode"], "demo");
+        assert_eq!(receipt["receipt"]["operation"], "book");
+        assert_eq!(receipt["receipt"]["status"], "reserved");
+        assert_eq!(receipt["receipt"]["slot"]["id"], payload["slotId"]);
+        let recorded = bookings(&assistant, id);
+        assert_eq!(recorded["bookings"].as_array().unwrap().len(), 1);
+        assert_eq!(recorded["bookings"][0]["id"], receipt["receipt"]["bookingId"]);
+    }
+
+    #[test]
+    fn direct_booking_rejects_an_account_switch_and_keeps_conflict_details_private() {
+        let assistant = CampusAssistant::new(true);
+        let id = "meeting-room";
+        connect(&assistant, id, "student");
+        let availability = assistant.call("availability", &json!({"service": id, "date": DATE})).unwrap();
+        let mut payload = json!({
+            "service": id, "date": DATE, "slotId": availability["slots"][0]["id"],
+            "confirmed": true, "expectedAccount": availability["account"],
+        });
+        assert_eq!(payload["expectedAccount"], "student");
+        connect(&assistant, id, "staff");
+        assert_eq!(assistant.call("book", &payload).unwrap_err().code, "campus_account_changed");
+        assert_eq!(bookings(&assistant, id)["bookings"], json!([]));
+
+        payload["expectedAccount"] = json!("staff");
+        let receipt = assistant.call("book", &payload).unwrap();
+        connect(&assistant, id, "student");
+        payload["expectedAccount"] = json!("student");
+        let error = assistant.call("book", &payload).unwrap_err();
+        assert_eq!(error.code, "campus_slot_conflict");
+        assert!(!error.message.contains(receipt["receipt"]["bookingId"].as_str().unwrap()));
+        assert_eq!(bookings(&assistant, id)["bookings"], json!([]));
     }
 
     #[test]
