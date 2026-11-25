@@ -59,6 +59,10 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
     match action {
         "status" => Ok(hub.status()),
         "submit_demand" => hub.submit_demand(payload),
+        "list_submissions" => hub.list_submissions(),
+        "withdraw_submission" => {
+            hub.withdraw_submission(required_string(&payload, "idempotencyKey")?)
+        }
         "update_demand" => {
             let demand_id = required_string(&payload, "demandId")?.to_owned();
             hub.update_demand(&demand_id, payload)
@@ -66,6 +70,22 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
         "list_demands" => {
             let status = optional_string(&payload, "status")?;
             hub.with_api(|api, token| api.list_demands(token, status))
+        }
+        "get_demand" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.get_demand(token, demand_id))
+        }
+        "rank_demand" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.rank_demand(token, demand_id))
+        }
+        "get_recommendation" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.get_recommendation(token, demand_id))
+        }
+        "recheck_recommendation" => {
+            let demand_id = required_string(&payload, "demandId")?;
+            hub.with_api(|api, token| api.recheck_recommendation(token, demand_id))
         }
         "cancel_demand" => hub.cancel_demand(required_string(&payload, "demandId")?),
         "complete_demand" => hub.complete_demand(required_string(&payload, "demandId")?),
@@ -113,9 +133,35 @@ fn dispatch(hub: &Hub, action: &str, payload: Value) -> ApiResult {
                     return Err(Failure::invalid_request());
                 }
             }
-            hub.with_api(|api, token| api.sync_local_profile(token, &payload))
+            hub.sync_local_profile(&payload)
         }
-        "get_profile" => hub.with_api(|api, token| api.get_profile(token)),
+        "edit_profile_fields" => {
+            if payload["confirmed"] != true {
+                return Err(Failure::confirmation_required());
+            }
+            let mut body = payload;
+            body.as_object_mut()
+                .expect("confirmed field implies object")
+                .remove("confirmed");
+            hub.edit_profile_fields(body)
+        }
+        "get_profile" => hub.get_profile(),
+        "set_modeling_consent" => {
+            if payload["confirmed"] != true {
+                return Err(Failure::confirmation_required());
+            }
+            let mut body = payload;
+            body.as_object_mut()
+                .expect("confirmed field implies object")
+                .remove("confirmed");
+            hub.set_modeling_consent(&body)
+        }
+        "profile_sync_status" => hub.profile_sync_status(),
+        "save_profile_draft" => hub.save_profile_draft(payload["changes"].clone()),
+        "discard_profile_draft" => hub.discard_profile_draft(),
+        "discard_failed_profile_edit" => {
+            hub.discard_failed_profile_edit(required_string(&payload, "mutationId")?)
+        }
         _ => Err(Failure::new("unknown_action", "未知的托盘操作。")),
     }
 }
@@ -211,13 +257,16 @@ impl Bridge {
 mod tests {
     use super::*;
     use crate::api::Api;
+    use crate::outbox::Outbox;
     use crate::session::{SessionStore, tests::TestDir};
     use std::net::Shutdown;
 
     fn logged_out_hub(dir: &TestDir) -> Hub {
         let session = SessionStore::open(dir.path()).unwrap();
         let api = Api::new("http://127.0.0.1:1").unwrap();
-        Hub::new(api, session, |_| panic!("request cannot update UI"))
+        Hub::new(api, session, Outbox::open(dir.path()).unwrap(), |_| {
+            panic!("request cannot update UI")
+        })
     }
 
     fn reply(hub: &Hub, request: &[u8]) -> Value {
