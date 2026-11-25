@@ -126,6 +126,49 @@ impl ProfileCache {
         Ok(result)
     }
 
+    pub fn observe_modeling_revocations<'a>(
+        &mut self,
+        api: &Api,
+        session: &Session,
+        revocations: impl Iterator<Item = &'a Value>,
+    ) -> ApiResult<()> {
+        let key = account_key(api, session);
+        let Some(mut profile) = self
+            .accounts
+            .get(&key)
+            .and_then(|account| account.confirmed.clone())
+        else {
+            return Ok(());
+        };
+        let mut changed = false;
+        for revocation in revocations {
+            let Some(source @ ("demands" | "interactions")) = revocation["source"].as_str() else {
+                continue;
+            };
+            let consent = &revocation["consent"];
+            let Some(revision) = consent["revision"].as_u64() else {
+                continue;
+            };
+            if consent["enabled"] != false
+                || revision
+                    <= profile["modeling"][source]["revision"]
+                        .as_u64()
+                        .unwrap_or(0)
+            {
+                continue;
+            }
+            profile["modeling"][source] = consent.clone();
+            if source == "demands" && profile["cloudProfile"].is_object() {
+                profile["cloudProfile"]["modelingCategories"] = json!([]);
+            }
+            changed = true;
+        }
+        if changed {
+            self.edit(&key, |account| account.confirmed = Some(profile))?;
+        }
+        Ok(())
+    }
+
     pub fn status(&self, api: &Api, session: &Session) -> Value {
         let key = account_key(api, session);
         let account = self.accounts.get(&key);
@@ -355,6 +398,54 @@ fn validate_changes(changes: &Value) -> ApiResult<()> {
 mod tests {
     use super::*;
     use crate::session::{Member, tests::TestDir};
+
+    #[test]
+    fn revocations_remove_cached_tags_and_respect_newer_consent() {
+        let dir = TestDir::new();
+        let api = Api::new("http://127.0.0.1:1").unwrap();
+        let owner = Session {
+            token: "test-session".into(),
+            member: Member {
+                id: "owner".into(),
+                email: "owner@example.test".into(),
+                display_name: "Test".into(),
+            },
+        };
+        let key = account_key(&api, &owner);
+        let state = |revision| {
+            json!({
+                "localProfile": { "campus": "East" },
+                "cloudProfile": { "modelingCategories": ["sports"], "recentCategories": ["sports"] },
+                "modeling": { "demands": { "enabled": true, "revision": revision } }
+            })
+        };
+        let event = json!({ "source": "demands", "consent": { "enabled": false, "revision": 2 } });
+        let mut profiles = ProfileCache::open(dir.path()).unwrap();
+        profiles
+            .edit(&key, |account| account.confirmed = Some(state(1)))
+            .unwrap();
+        profiles
+            .observe_modeling_revocations(&api, &owner, std::iter::once(&event))
+            .unwrap();
+
+        let mut profiles = ProfileCache::open(dir.path()).unwrap();
+        let stored = profiles.accounts[&key].confirmed.as_ref().unwrap();
+        assert_eq!(stored["modeling"]["demands"], event["consent"]);
+        assert_eq!(stored["cloudProfile"]["modelingCategories"], json!([]));
+        assert_eq!(
+            stored["cloudProfile"]["recentCategories"],
+            json!(["sports"])
+        );
+        assert_eq!(stored["localProfile"]["campus"], "East");
+
+        profiles
+            .edit(&key, |account| account.confirmed = Some(state(3)))
+            .unwrap();
+        profiles
+            .observe_modeling_revocations(&api, &owner, std::iter::once(&event))
+            .unwrap();
+        assert_eq!(profiles.accounts[&key].confirmed, Some(state(3)));
+    }
 
     #[test]
     fn confirmed_edit_survives_restart_without_replacing_cached_profile_or_crossing_accounts() {

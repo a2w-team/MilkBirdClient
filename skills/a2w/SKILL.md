@@ -49,7 +49,9 @@ disable-model-invocation: true
 
 单次匹配授权只适用于当前需求。两种长期来源默认关闭。只有成员明确要调整长期用途时，才按来源询问并提交。`demands` 对应本人新提交的需求分类。`interactions` 对应本人对邀请的接受或拒绝，以及对俱乐部回应选的反馈。Agent 私聊、群聊原文和回应原文留在各自用途下。
 
-先用 `get-profile` 读取后台当前设置，`profileSource: cache` 时向成员说明还需联网读取。确认本次要开启或关闭的来源后，用 `set-modeling-consent --confirmed --source demands|interactions --enable|--disable --base-revision …`，版本取 `modeling[来源].revision`。以返回的 `consent` 确认设置。关闭来源会移除已登记输入。遇到 `modeling_consent_changed` 时重新读取，再请成员确认。
+先用 `get-profile` 读取后台当前设置，`profileSource: cache` 时向成员说明还需联网读取。关闭前告知成员，该来源的已登记输入会清除，已使用该来源推断且仍在匹配的需求会停止。确认本次要调整的来源后，用 `set-modeling-consent --confirmed --source demands|interactions --enable|--disable --base-revision …`，版本取 `modeling[来源].revision`。遇到 `modeling_consent_changed` 时重新读取，再请成员确认。
+
+以回执的 `consent` 核对来源设置。若包含 `revokedDemandIds`，用 `get-demand --id …` 核对原授权为 `revoked`，向成员说明哪些需求已停止。继续这些需求时，按当前可用范围重新整理需求卡片，取得确认后使用新的幂等键提交。
 
 ## 离线提交与撤回
 

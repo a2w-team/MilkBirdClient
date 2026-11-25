@@ -929,6 +929,18 @@ impl Hub {
                     last_seq,
                 }) => {
                     events.sort_by_key(|event| event.seq);
+                    let mut revocations = events.iter()
+                        .filter(|event| event.kind == "profile.modeling.revoked")
+                        .map(|event| &event.data)
+                        .peekable();
+                    if revocations.peek().is_some() {
+                        let updated = self.outbox.lock().expect("demand outbox")
+                            .profiles.observe_modeling_revocations(&self.api, &session, revocations);
+                        if updated.is_err() {
+                            self.wait_to_retry(generation, Duration::from_secs(2));
+                            continue;
+                        }
+                    }
                     let mut runtime = self.runtime.lock().expect("hub state");
                     if runtime.generation != generation {
                         continue;

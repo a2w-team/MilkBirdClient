@@ -54,6 +54,8 @@
 ```
 活动计数和 `recentCategories` 是本人活动记录。`modelingCategories` 只列出获准用于长期建模的有效需求分类。`PATCH /api/v1/profile/modeling` 接受 `{source, enabled, baseRevision}`。来源为 `demands` 或 `interactions`，均默认关闭。版本取 `modeling[来源].revision`。成功回复 `{consent, profile}`，过期设置返回 `409 modeling_consent_changed`。关闭清除该来源的已登记输入，再次开启只登记新活动。
 
+关闭来源会清除关联快照的推断和索引。依赖该来源且仍在匹配的需求被撤回，回执的 `revokedDemandIds` 列出本次受影响的需求。同账号其他设备接收 `profile.modeling.revoked` 和受影响需求的 `demand.updated`。重新开启来源后，原幂等键仍返回原授权及撤回状态。
+
 ---
 
 ## 2. 需求卡片与挂起
