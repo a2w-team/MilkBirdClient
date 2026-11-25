@@ -22,6 +22,20 @@
         "shadow": true
       },
       {
+        "label": "campus-assistant",
+        "url": "campus/index.html",
+        "create": false,
+        "title": "校园私人助理",
+        "width": 460,
+        "height": 600,
+        "minWidth": 360,
+        "minHeight": 480,
+        "center": true,
+        "visible": false,
+        "resizable": true,
+        "shadow": true
+      },
+      {
         "label": "toast",
         "url": "toast.html",
         "create": false,
@@ -59,7 +73,9 @@
     "resources": {
       "../../../skills/a2w/SKILL.md": "skills/a2w/SKILL.md",
       "../../../skills/a2w/references/demand-confirmation.md": "skills/a2w/references/demand-confirmation.md",
-      "../../../skills/a2w/scripts/a2w_tray.py": "skills/a2w/scripts/a2w_tray.py"
+      "../../../skills/a2w/scripts/a2w_tray.py": "skills/a2w/scripts/a2w_tray.py",
+      "../../../skills/campus-assistant/SKILL.md": "skills/campus-assistant/SKILL.md",
+      "../../../skills/campus-assistant/scripts/campus_tray.py": "skills/campus-assistant/scripts/campus_tray.py"
     }
   }
 }

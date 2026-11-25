@@ -8,6 +8,7 @@
 - **异构回应与安全渲染**：统一展示链接卡片、富文本回应与沙箱 `iframe` HTML 卡片，支持点赞/不感兴趣反馈；多人匹配全员同意后进入 **24 小时临时群**，支持到期前过半投票留存。
 - **右下角互斥悬浮提醒**：主窗口未打开时，在当前屏幕右下角弹出可关闭的轻量通知浮窗；主窗口打开后只展示应用内未读红点，不重复打扰。
 - **本地 Agent 协同（`/a2w` Skill）**：通过当前用户私有的 Unix socket 与 `skills/a2w/scripts/a2w_tray.py`（16 个子命令）联通本地 Agent，支持需求创建/修改/历史查询、匹配同意与群聊交互。
+- **港科广校园私人助理**目前提供四项模拟服务。在 Agent 对话中可查询邮件、课表和场地时段，也可提交指定时段的预约。
 
 > 注意：本仓库的 `/a2w` 是面向校园用户的**产品端 Skill**，与研发协作看板 CoDev 的 CLI `a2w` 不同。
 
@@ -15,6 +16,7 @@
 
 - [安装入口](install.md)
 - [a2w 产品 Skill](skills/a2w/SKILL.md)
+- [校园私人助理 Skill](skills/campus-assistant/SKILL.md)
 - [托盘本机工具契约](contracts/tray/v1/tools.md)
 - [后台登录契约](contracts/club/v1/auth.md)
 - [后台需求、匹配与群聊契约](contracts/club/v1/demands-and-rooms.md)
@@ -50,6 +52,14 @@ python3 apps/tray/dev/start_mock.py
 - 打开「周末双打缺一位搭档」试用匹配邀请，或进入「找同学一起复习概率论」的群聊发消息、投票保留。
 
 Mock 使用临时回环端口和独立的本机会话目录。按终端的 `Ctrl+C` 或从托盘菜单退出后会清理演示环境，下次启动恢复示例数据。
+
+### 试用校园私人助理
+
+```sh
+MILKBIRD_CAMPUS_DEMO=1 python3 apps/tray/dev/start_mock.py
+```
+
+托盘会打开「校园私人助理」。选择要试用的服务并点击「连接模拟账号」。装好[校园私人助理 Skill](install.md#校园私人助理)后，在启动 Agent 的终端设置 Mock 输出的 `MILKBIRD_TRAY_DIR`，即可在普通对话中说「帮我约明天广州时间 15:00 到 16:00 的演示会议室 A」。查询和预约回执均来自模拟服务。
 
 ## 验证命令
 
