@@ -116,6 +116,20 @@ impl ProfileCache {
         body: &Value,
     ) -> ApiResult {
         let result = api.set_modeling_consent(&session.token, body)?;
+        self.cache_settings_result(api, session, result)
+    }
+
+    pub fn set_inference_control(
+        &mut self,
+        api: &Api,
+        session: &Session,
+        body: &Value,
+    ) -> ApiResult {
+        let result = api.set_inference_control(&session.token, body)?;
+        self.cache_settings_result(api, session, result)
+    }
+
+    fn cache_settings_result(&mut self, api: &Api, session: &Session, result: Value) -> ApiResult {
         let profile = result
             .get("profile")
             .filter(|profile| profile.is_object())
@@ -126,11 +140,11 @@ impl ProfileCache {
         Ok(result)
     }
 
-    pub fn observe_modeling_revocations<'a>(
+    pub fn observe_profile_changes<'a>(
         &mut self,
         api: &Api,
         session: &Session,
-        revocations: impl Iterator<Item = &'a Value>,
+        events: impl Iterator<Item = (&'a str, &'a Value)>,
     ) -> ApiResult<()> {
         let key = account_key(api, session);
         let Some(mut profile) = self
@@ -141,25 +155,49 @@ impl ProfileCache {
             return Ok(());
         };
         let mut changed = false;
-        for revocation in revocations {
-            let Some(source @ ("demands" | "interactions")) = revocation["source"].as_str() else {
+        for (kind, event) in events {
+            let (section, key, state) = match kind {
+                "profile.modeling.revoked" if event["consent"]["enabled"] == false => {
+                    ("modeling", event["source"].as_str(), &event["consent"])
+                }
+                "profile.inference.changed" => (
+                    "inferenceControls",
+                    event["tag"].as_str(),
+                    &event["control"],
+                ),
+                _ => continue,
+            };
+            let (Some(key), Some(revision)) = (key, state["revision"].as_u64()) else {
                 continue;
             };
-            let consent = &revocation["consent"];
-            let Some(revision) = consent["revision"].as_u64() else {
-                continue;
-            };
-            if consent["enabled"] != false
-                || revision
-                    <= profile["modeling"][source]["revision"]
-                        .as_u64()
-                        .unwrap_or(0)
-            {
+            if revision <= profile[section][key]["revision"].as_u64().unwrap_or(0) {
                 continue;
             }
-            profile["modeling"][source] = consent.clone();
-            if source == "demands" && profile["cloudProfile"].is_object() {
-                profile["cloudProfile"]["modelingCategories"] = json!([]);
+            profile[section][key] = state.clone();
+            if let Some(cloud) = profile["cloudProfile"].as_object_mut() {
+                if let Some(inferences) = cloud.get_mut("inferences").and_then(Value::as_array_mut)
+                {
+                    inferences.retain(|inference| {
+                        if section == "modeling" {
+                            !inference["sources"].as_array().is_some_and(|sources| {
+                                sources.iter().any(|source| source["source"] == key)
+                            })
+                        } else {
+                            inference["tag"] != key
+                        }
+                    });
+                    let tags = json!(
+                        inferences
+                            .iter()
+                            .filter_map(|inference| inference["tag"].as_str())
+                            .collect::<Vec<_>>()
+                    );
+                    cloud.insert("modelingCategories".into(), tags);
+                } else if section == "modeling" && key == "demands" {
+                    cloud.insert("modelingCategories".into(), json!([]));
+                }
+                // The next live read supplies the authoritative evidence version.
+                cloud.remove("inferenceVersion");
             }
             changed = true;
         }
@@ -425,7 +463,11 @@ mod tests {
             .edit(&key, |account| account.confirmed = Some(state(1)))
             .unwrap();
         profiles
-            .observe_modeling_revocations(&api, &owner, std::iter::once(&event))
+            .observe_profile_changes(
+                &api,
+                &owner,
+                std::iter::once(("profile.modeling.revoked", &event)),
+            )
             .unwrap();
 
         let mut profiles = ProfileCache::open(dir.path()).unwrap();
@@ -442,9 +484,37 @@ mod tests {
             .edit(&key, |account| account.confirmed = Some(state(3)))
             .unwrap();
         profiles
-            .observe_modeling_revocations(&api, &owner, std::iter::once(&event))
+            .observe_profile_changes(
+                &api,
+                &owner,
+                std::iter::once(("profile.modeling.revoked", &event)),
+            )
             .unwrap();
         assert_eq!(profiles.accounts[&key].confirmed, Some(state(3)));
+
+        let mut with_inferences = state(3);
+        with_inferences["cloudProfile"]["inferences"] = json!([
+            { "tag": "sports", "sources": [{"source": "demands"}, {"source": "interactions"}] },
+            { "tag": "study", "sources": [{"source": "demands"}] }
+        ]);
+        profiles
+            .edit(&key, |account| account.confirmed = Some(with_inferences))
+            .unwrap();
+        let correction =
+            json!({ "tag": "sports", "control": { "action": "correct", "revision": 1 } });
+        profiles
+            .observe_profile_changes(
+                &api,
+                &owner,
+                std::iter::once(("profile.inference.changed", &correction)),
+            )
+            .unwrap();
+        let stored = profiles.accounts[&key].confirmed.as_ref().unwrap();
+        assert_eq!(
+            stored["cloudProfile"]["modelingCategories"],
+            json!(["study"])
+        );
+        assert_eq!(stored["inferenceControls"]["sports"], correction["control"]);
     }
 
     #[test]

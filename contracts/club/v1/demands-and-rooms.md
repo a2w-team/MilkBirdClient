@@ -43,18 +43,23 @@
     "roomMessageCount": 14,
     "recentCategories": ["dining", "sports"],
     "modelingCategories": [],
+    "inferences": [],
+    "inferenceVersion": "<version>",
     "summary": "已提交 3 条需求，同意 2 次匹配，发送 14 条群消息。",
     "updatedAt": "2026-11-23T12:05:00Z"
   },
   "modeling": {
     "demands": {"enabled": false, "revision": 0},
     "interactions": {"enabled": false, "revision": 0}
-  }
+  },
+  "inferenceControls": {}
 }
 ```
-活动计数和 `recentCategories` 是本人活动记录。`modelingCategories` 只列出获准用于长期建模的有效需求分类。`PATCH /api/v1/profile/modeling` 接受 `{source, enabled, baseRevision}`。来源为 `demands` 或 `interactions`，均默认关闭。版本取 `modeling[来源].revision`。成功回复 `{consent, profile}`，过期设置返回 `409 modeling_consent_changed`。关闭清除该来源的已登记输入，再次开启只登记新活动。
+活动计数和 `recentCategories` 是本人活动记录。`modelingCategories` 列出当前可用的推断标签。`inferences` 包含逐项标签、证据版本、规则版本、置信分、生成时间、有效期，以及属于当前成员的来源引用。`PATCH /api/v1/profile/modeling` 接受 `{source, enabled, baseRevision}`。来源为 `demands` 或 `interactions`，均默认关闭。版本取 `modeling[来源].revision`。成功回复 `{consent, profile}`，过期设置返回 `409 modeling_consent_changed`。关闭清除该来源的已登记输入，再次开启只登记新活动。
 
 关闭来源会清除关联快照的推断和索引。依赖该来源且仍在匹配的需求被撤回，回执的 `revokedDemandIds` 列出本次受影响的需求。同账号其他设备接收 `profile.modeling.revoked` 和受影响需求的 `demand.updated`。重新开启来源后，原幂等键仍返回原授权及撤回状态。
+
+`PATCH /api/v1/profile/inferences` 接受 `{tag, action, baseRevision}`。`correct` 清除某项推断并从新证据重新计算，`disable` 持续停用，`enable` 恢复后从新记录累计。控制版本取 `inferenceControls[标签].revision`，首次用 `0`。成功返回 `{control, profile, revokedDemandIds?}`。其他设备从 `profile.inference.changed` 更新本机状态。
 
 ---
 
@@ -120,7 +125,7 @@
 - `POST /api/v1/demands/:id/cancel` → 仅本人可操作；将需求置为 `cancelled`，同时将关联 `pending` 匹配置为 `cancelled` 并通知各方；返回 `200 {"demand": {...}}`。
 - `POST /api/v1/demands/withdraw-submission` 接受原提交的 `{idempotencyKey}`。已创建需求时按同样规则撤回并返回 `{demand}`。需求尚未创建时返回 `{demand: null}` 并记录撤回。当前账号随后使用该键的新建提交返回 `409 demand_submission_withdrawn`。
 
-提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。`profileFields` 将用户明确选中的长期字段映射到 `localProfile.fieldVersions[字段名].version`，例如 `{"preferences.food":2}`。用户从 `cloudProfile.modelingCategories` 明确选中的标签用 `inferredTags`，并带上 `cloudProfile.updatedAt` 作为 `cloudVersion`。从 `GET /api/v1/profile` 读取。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。所选字段被改动或删除、标签失效或来源版本变化时返回 `409 match_profile_changed`。同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
+提交时带上 `matchAuthorization: {"purpose":"single_match"}` 和经确认的未来 `expiresAt`，签发绑定本次需求版本的授权。`profileFields` 将用户明确选中的长期字段映射到 `localProfile.fieldVersions[字段名].version`，例如 `{"preferences.food":2}`。用户从 `cloudProfile.inferences` 明确选中的标签用 `inferredTags`，并带上 `cloudProfile.inferenceVersion` 作为 `cloudVersion`。从 `GET /api/v1/profile` 读取。授权回执 `demand.matchAuthorization` 含 `grantId`、`demandVersion`、`purpose`、`expiresAt` 和 `status`（`active`、`revoked`、`expired`、`closed`）。所选字段被改动或删除、标签失效或证据版本变化时返回 `409 match_profile_changed`。所选推断早于需求截止时返回 `409 inference_expires_before_demand`。同一幂等键提交不同确认内容返回 `409 idempotency_conflict`。撤回后保持原需求 ID、原授权编号，回执显示 `revoked`。
 
 ### 2.3 修改需求与查询版本历史
 

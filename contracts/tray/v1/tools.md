@@ -64,9 +64,9 @@ Hub 返回的 `active_demand_limit_reached`、`room_expired` 和 `demand_not_edi
 
 使用 `update-demand --confirmed --id …` 修改现有需求，可用 `--change-note` 记录说明。`--start` 和 `--end` 成对传入并打包为 `timeWindow`。`--party-min` 和 `--party-max` 打包为 `partySize`，沿用 `submit-demand` 的缺省规则。使用 `list-revisions --demand-id …` 查询版本历史。
 
-用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，例如 `--profile-field preferences.food=2`，版本取自确认时 `get-profile` 的 `localProfile.fieldVersions[字段名].version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上该次读取的 `cloudProfile.updatedAt` 作为 `--cloud-version`。用 `get-demand --id …` 查询原需求及其授权状态。
+用 `submit-demand --single-match --expires-at … --idempotency-key …` 提交已确认的单次匹配授权。明确允许长期画像字段时，每项加 `--profile-field`，例如 `--profile-field preferences.food=2`，版本取自确认时 `get-profile` 的 `localProfile.fieldVersions[字段名].version`。明确允许推断标签时，每项加 `--inferred-tag`，并带上该次联网读取的 `cloudProfile.inferenceVersion` 作为 `--cloud-version`。用 `get-demand --id …` 查询原需求及其授权状态。
 
-长期建模用 `set-modeling-consent --confirmed --source demands|interactions --enable|--disable --base-revision …`。先读取该来源的 `modeling[来源].revision`，按成员明确确认的设置提交。单次匹配回执不会改变长期授权。可选标签取自 `get-profile` 的 `cloudProfile.modelingCategories`。
+长期建模用 `set-modeling-consent --confirmed --source demands|interactions --enable|--disable --base-revision …`。先读取该来源的 `modeling[来源].revision`，按成员明确确认的设置提交。单次匹配回执不会改变长期授权。推断标签及依据取自 `get-profile` 的 `cloudProfile.inferences`，纠正和停用在托盘资料页操作。
 
 关闭来源的回执可能包含 `revokedDemandIds`，即依赖该来源并被停止的在途需求。其他设备收到 `profile.modeling.revoked` 后按来源版本清除本机的相关推断，并从 `demand.updated` 更新需求状态。旧版本事件保持当前缓存的较新版本。
 

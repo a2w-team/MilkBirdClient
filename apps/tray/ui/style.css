@@ -718,8 +718,10 @@ button.ver-btn[aria-expanded="true"] {
 .profile-card h3, .profile-dialog h3 { font-size: 14px; }
 .profile-card .spec-row { align-items: flex-start; }
 .profile-card .spec-k { width: 68px; overflow-wrap: anywhere; }
-.profile-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.profile-tags .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.profile-inferences { display: flex; flex-direction: column; margin-top: 8px; }
+.inference-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.inference-sources { margin-top: 4px; }
+.inference-sources ul { margin: 4px 0; padding-left: 16px; color: var(--muted); }
 .profile-notifications { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .profile-notifications input { flex: none; width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--accent); }
 .profile-dialog { width: min(340px, calc(100% - 28px)); padding: 16px; color: var(--ink); }

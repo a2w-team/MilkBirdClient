@@ -627,6 +627,12 @@ impl Hub {
         })
     }
 
+    pub fn set_inference_control(&self, body: &Value) -> ApiResult {
+        self.profile_action(true, |outbox, api, session| {
+            outbox.profiles.set_inference_control(api, session, body)
+        })
+    }
+
     pub fn profile_sync_status(&self) -> ApiResult {
         self.profile_action(false, |outbox, api, session| {
             Ok(outbox.profiles.status(api, session))
@@ -931,12 +937,12 @@ impl Hub {
                 }) => {
                     events.sort_by_key(|event| event.seq);
                     let mut revocations = events.iter()
-                        .filter(|event| event.kind == "profile.modeling.revoked")
-                        .map(|event| &event.data)
+                        .filter(|event| matches!(event.kind.as_str(), "profile.modeling.revoked" | "profile.inference.changed"))
+                        .map(|event| (event.kind.as_str(), &event.data))
                         .peekable();
                     if revocations.peek().is_some() {
                         let updated = self.outbox.lock().expect("demand outbox")
-                            .profiles.observe_modeling_revocations(&self.api, &session, revocations);
+                            .profiles.observe_profile_changes(&self.api, &session, revocations);
                         if updated.is_err() {
                             self.wait_to_retry(generation, Duration::from_secs(2));
                             continue;

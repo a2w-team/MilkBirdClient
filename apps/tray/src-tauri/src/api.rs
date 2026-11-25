@@ -79,6 +79,10 @@ impl Failure {
                 "资料已更新，请比较当前值和你的编辑后选择。"
             }
             (StatusCode::CONFLICT, "modeling_consent_changed") => "建模授权已更新，请刷新后确认。",
+            (StatusCode::CONFLICT, "inference_control_changed") => "推断设置已更新，请刷新后确认。",
+            (StatusCode::CONFLICT, "inference_expires_before_demand") => {
+                "选中的推断早于需求截止。请确认新的截止时间或共享范围。"
+            }
             (StatusCode::CONFLICT, "response_feedback_changed") => "回应反馈已更新，请刷新后再操作。",
             (StatusCode::CONFLICT, "idempotency_conflict") => {
                 "这次提交与原确认单不同，请重新确认后提交。"
@@ -429,6 +433,10 @@ impl Api {
 
     pub fn set_modeling_consent(&self, token: &str, body: &Value) -> ApiResult {
         self.write(Method::PATCH, &["profile", "modeling"], Some(body), Some(token))
+    }
+
+    pub fn set_inference_control(&self, token: &str, body: &Value) -> ApiResult {
+        self.write(Method::PATCH, &["profile", "inferences"], Some(body), Some(token))
     }
 }
 

@@ -322,6 +322,61 @@ async function confirmProfileChange(title, message) {
   }
 }
 
+function renderInferences(cached) {
+  const controls = accountProfile?.inferenceControls || {}
+  const inferences = accountProfile?.cloudProfile?.inferences || []
+  const live = Boolean(accountProfile) && !cached
+  const change = (tag, action) => makeButton({ correct: '纠正', disable: '停用', enable: '恢复' }[action], async () => {
+    const labels = { correct: ['纠正推断', '清除这项推断，并停止使用它的在途匹配。以后仅用新记录重新判断。'],
+      disable: ['停用推断', '停止生成这项推断，并停止使用它的在途匹配。'],
+      enable: ['恢复推断', '允许俱乐部根据恢复后的新记录重新判断。'] }
+    const [title, message] = labels[action]
+    if (!await confirmProfileChange(`${title} · ${tag}`, message)) return
+    const result = await invoke('set_inference_control', { confirmed: true, tag, action, baseRevision: controls[tag]?.revision || 0 })
+    await sync()
+    const closed = result.revokedDemandIds?.length || 0
+    feedback(closed ? `设置已保存，已停止 ${closed} 条需求。` : '推断设置已保存。')
+  }, 'btn-quiet')
+
+  const liveTags = new Set(inferences.map(inference => inference.tag))
+  const rows = inferences.map(inference => {
+    const block = node('section', undefined, 'spec-row inference-row')
+    const content = node('div', undefined, 'spec-v')
+    content.append(node('strong', inference.tag), node('div',
+      `规则置信度 ${Math.round(inference.confidence * 100)}% · 有效至 ${shortTime(inference.expiresAt)}`, 'muted'))
+    const details = node('details', undefined, 'inference-sources')
+    details.append(node('summary', `依据 ${inference.sources.length} 条记录`), node('p',
+      `规则 ${inference.ruleVersion} · 生成于 ${shortTime(inference.generatedAt)}`, 'muted'))
+    const labels = { demand: '本人需求', invitation: '邀请决定', response_feedback: '回应反馈' }
+    const values = { accept: '接受', decline: '拒绝', useful: '有用', dismissed: '不合适' }
+    const demands = profileDemands ?? cache.demands
+    const evidence = node('ul')
+    for (const source of inference.sources) {
+      const demand = demands.find(item => item.id === source.demandId)
+      const choice = source.kind === 'demand' ? '' : values[source.value]
+      evidence.append(node('li', [labels[source.kind], demand?.title, choice,
+        shortTime(source.observedAt), `来源授权 v${source.consentRevision}`].filter(Boolean).join(' · ')))
+    }
+    details.append(evidence)
+    content.append(details)
+    block.append(content)
+    if (live) {
+      const actions = node('div', undefined, 'inference-actions')
+      actions.append(change(inference.tag, 'correct'), change(inference.tag, 'disable'))
+      block.append(actions)
+    }
+    return block
+  })
+
+  for (const [tag, control] of Object.entries(controls)) {
+    if (liveTags.has(tag)) continue
+    if (control.action === 'disable') rows.push(profileRow(tag, '已停用', live ? change(tag, 'enable') : null))
+    if (control.action === 'correct') rows.push(profileRow(tag, '已纠正 · 等待新记录'))
+  }
+  $('profile-inferred').replaceChildren(...(rows.length ? rows : [node('span',
+    accountProfile ? '暂无可用推断' : '暂时无法读取', 'muted')]))
+}
+
 function renderAccountProfile() {
   const cached = accountProfile?.profileSource === 'cache'
   $('profile-source').textContent = accountProfile ? (cached ? '上次同步' : '服务端已确认') : '资料暂不可用'
@@ -338,10 +393,7 @@ function renderAccountProfile() {
     return row
   }) : [node('p', accountProfile ? '暂无本人资料' : '暂时无法读取', 'muted')]))
 
-  const inferred = accountProfile?.cloudProfile?.modelingCategories || []
-  $('profile-inferred').replaceChildren(...(inferred.length
-    ? inferred.map(tag => node('span', tag, 'pill'))
-    : [node('span', accountProfile ? '暂无可用推断' : '暂时无法读取', 'muted')]))
+  renderInferences(cached)
 
   const sources = [['demands', '需求分类'], ['interactions', '邀请与反馈']]
   $('profile-modeling').replaceChildren(...sources.map(([source, label]) => {

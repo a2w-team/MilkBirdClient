@@ -260,6 +260,25 @@ async fn set_modeling_consent(
 }
 
 #[tauri::command]
+async fn set_inference_control(
+    state: State<'_, Arc<Hub>>,
+    confirmed: bool,
+    tag: String,
+    action: String,
+    base_revision: u64,
+) -> ApiResult {
+    if !confirmed {
+        return Err(Failure::confirmation_required());
+    }
+    blocking(state, move |hub| {
+        hub.set_inference_control(&serde_json::json!({
+            "tag": tag, "action": action, "baseRevision": base_revision,
+        }))
+    })
+    .await
+}
+
+#[tauri::command]
 async fn profile_sync_status(state: State<'_, Arc<Hub>>) -> ApiResult {
     blocking(state, Hub::profile_sync_status).await
 }
@@ -520,6 +539,7 @@ fn main() {
             leave_room,
             get_profile,
             set_modeling_consent,
+            set_inference_control,
             profile_sync_status,
             discard_profile_draft,
             discard_failed_profile_edit,
