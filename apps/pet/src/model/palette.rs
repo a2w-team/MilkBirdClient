@@ -1,9 +1,9 @@
-//! Color palette for the MilkBird ("小红鸟 / 奶鸟") character.
+//! Color palette for the original "奶鸟 (MilkBird)" character.
 //!
-//! Inspired by the iconic HKUST / HKUST-GZ Red Bird sundial mascot plushie:
-//! vivid plush crimson body, bright flame-orange sundial crest, snowy milky-white round tummy
-//! with a minimalist gold-and-ink club emblem, electric sky-blue eye irises, berry-red plush
-//! beak & 3-lobed wings, and warm caramel-tan feet.
+//! Takes loose creative inspiration from fiery campus red-bird energy while remaining a
+//! 100% original designer-toy character: lively coral-vermilion plumage, pure creamy
+//! milk-foam belly fluff (no logos), mango-gold flame tuft, warm peach-tipped wings,
+//! starry espresso-jewel eyes, and honey-apricot beak & feet.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,7 +35,7 @@ impl Rgba {
     }
 }
 
-/// Complete character palette.
+/// Complete original MilkBird palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Palette {
     pub body_highlight: Rgba,
@@ -47,25 +47,21 @@ pub struct Palette {
     pub outline: Rgba,
     pub crest_tip: Rgba,
     pub crest_base: Rgba,
+    pub crest_cream: Rgba,
     pub wing_base: Rgba,
-    pub wing_lobe: Rgba,
+    pub wing_tip: Rgba,
     pub wing_shade: Rgba,
     pub tail_base: Rgba,
-    pub tail_accent: Rgba,
+    pub tail_tip: Rgba,
     pub beak_top: Rgba,
     pub beak_base: Rgba,
     pub beak_inner: Rgba,
     pub foot_base: Rgba,
     pub foot_shade: Rgba,
     pub cheek: Rgba,
-    pub eye_sclera: Rgba,
-    pub eye_iris: Rgba,
-    pub eye_iris_deep: Rgba,
     pub eye_ink: Rgba,
+    pub eye_sheen: Rgba,
     pub eye_sparkle: Rgba,
-    pub brow_accent: Rgba,
-    pub emblem_ink: Rgba,
-    pub emblem_gold: Rgba,
     pub badge_alert: Rgba,
     pub badge_ok: Rgba,
     pub heart: Rgba,
@@ -75,54 +71,49 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Signature HKUST-GZ Red Bird ("小红鸟 / 奶鸟") plush palette.
-    pub const fn milkbird_red() -> Self {
+    /// Original MilkBird ("奶鸟") palette: coral-flame plumage + creamy milk-foam fluff + mango-gold crest.
+    pub const fn milkbird_original() -> Self {
         Self {
-            body_highlight: Rgba::rgb(248, 44, 62),    // #F82C3E plush crimson sheen
-            body_base: Rgba::rgb(225, 22, 42),         // #E1162A vivid red-bird scarlet
-            body_shade: Rgba::rgb(176, 14, 34),        // #B00E22 deep velvet shadow
-            belly_highlight: Rgba::rgb(255, 255, 255), // #FFFFFF snowy white tummy
-            belly_base: Rgba::rgb(252, 250, 247),      // #FCFAF7 soft milky plush
-            belly_shade: Rgba::rgb(235, 230, 224),     // #EBE6E0 warm tummy shadow
-            outline: Rgba::rgb(104, 15, 26),           // #680F1A deep burgundy plush contour
-            crest_tip: Rgba::rgb(255, 138, 28),        // #FF8A1C bright flame-orange tip
-            crest_base: Rgba::rgb(244, 63, 18),        // #F43F12 fiery sundial vermilion
-            wing_base: Rgba::rgb(228, 24, 46),         // #E4182E crimson plush wing
-            wing_lobe: Rgba::rgb(198, 22, 54),         // #C61636 berry-crimson scalloped pads
-            wing_shade: Rgba::rgb(162, 14, 40),        // #A20E28 wing depth
-            tail_base: Rgba::rgb(218, 26, 44),         // #DA1A2C red tail feather
-            tail_accent: Rgba::rgb(249, 102, 24),      // #F96618 flame accent tail
-            beak_top: Rgba::rgb(248, 84, 114),         // #F85472 soft berry-pink highlight
-            beak_base: Rgba::rgb(214, 34, 66),         // #D62242 plush berry-red beak
-            beak_inner: Rgba::rgb(255, 158, 174),      // #FF9EAE rosy open mouth
-            foot_base: Rgba::rgb(198, 140, 70),        // #C68C46 warm caramel-tan plush feet
-            foot_shade: Rgba::rgb(160, 108, 46),       // #A06C2E caramel shadow
-            cheek: Rgba::rgb(255, 138, 160),           // #FF8AA0 warm rosy glow
-            eye_sclera: Rgba::rgb(255, 255, 255),      // #FFFFFF outer white ring
-            eye_iris: Rgba::rgb(56, 189, 248),         // #38BDF8 iconic electric sky-blue iris
-            eye_iris_deep: Rgba::rgb(14, 145, 218),    // #0E91DA deeper cyan iris rim
-            eye_ink: Rgba::rgb(22, 20, 26),            // #16141A deep glossy black pupil
-            eye_sparkle: Rgba::rgb(255, 255, 255),     // #FFFFFF bright catchlight
-            brow_accent: Rgba::rgb(152, 16, 36),       // #981024 subtle embroidered red brow
-            emblem_ink: Rgba::rgb(34, 36, 42),         // #22242A crisp dark emblem lines
-            emblem_gold: Rgba::rgb(217, 152, 34),      // #D99822 sundial gold accent
-            badge_alert: Rgba::rgb(37, 99, 235),       // #2563EB vibrant cobalt pill (contrasts red!)
+            body_highlight: Rgba::rgb(255, 102, 92),   // #FF665C sunny coral sheen
+            body_base: Rgba::rgb(239, 64, 62),         // #EF403E lively coral-red plumage
+            body_shade: Rgba::rgb(200, 38, 52),        // #C82634 warm berry shadow
+            belly_highlight: Rgba::rgb(255, 254, 250), // #FFFEFA pure milk foam
+            belly_base: Rgba::rgb(255, 249, 238),      // #FFF9EE warm creamy milk
+            belly_shade: Rgba::rgb(242, 230, 214),     // #F2E6D6 soft oat-milk shadow
+            outline: Rgba::rgb(102, 34, 42),           // #66222A soft warm berry-cocoa contour
+            crest_tip: Rgba::rgb(255, 190, 64),        // #FFBE40 bright mango-gold tip
+            crest_base: Rgba::rgb(255, 108, 54),       // #FF6C36 warm tangerine flame
+            crest_cream: Rgba::rgb(255, 244, 224),     // #FFF4E0 milk-foam secondary sprout
+            wing_base: Rgba::rgb(232, 58, 60),         // #E83A3C coral wing shoulder
+            wing_tip: Rgba::rgb(255, 228, 206),        // #FFE4CE soft peach-milk feather tip
+            wing_shade: Rgba::rgb(190, 36, 52),        // #BE2434 back-wing depth
+            tail_base: Rgba::rgb(224, 52, 56),         // #E03438 coral tail
+            tail_tip: Rgba::rgb(255, 174, 58),         // #FFAE3A golden-tangerine tail tip
+            beak_top: Rgba::rgb(253, 214, 96),         // #FDD660 bright honey-gold highlight
+            beak_base: Rgba::rgb(245, 162, 28),        // #F5A21C warm apricot beak
+            beak_inner: Rgba::rgb(244, 114, 140),      // #F4728C rosy open mouth
+            foot_base: Rgba::rgb(245, 166, 48),        // #F5A630 warm honey-apricot feet
+            foot_shade: Rgba::rgb(214, 128, 22),       // #D68016 foot shadow
+            cheek: Rgba::rgb(255, 174, 186),           // #FFAEBA soft strawberry-milk blush
+            eye_ink: Rgba::rgb(32, 24, 34),            // #201822 deep starry espresso-plum
+            eye_sheen: Rgba::rgb(255, 186, 92),        // #FFBA5C subtle warm amber iris crescent
+            eye_sparkle: Rgba::rgb(255, 255, 255),     // #FFFFFF crisp twin catchlights
+            badge_alert: Rgba::rgb(37, 99, 235),       // #2563EB crisp cobalt unread pill
             badge_ok: Rgba::rgb(16, 185, 129),         // #10B981 emerald active watch
-            heart: Rgba::rgb(255, 112, 148),           // #FF7094 floating petted hearts
-            sleep_zzz: Rgba::rgb(96, 165, 250),        // #60A5FA crisp sky-blue Zzz
-            sparkle: Rgba::rgb(251, 191, 36),          // #FBBF24 golden celebration stars
-            shadow: Rgba::new(52, 16, 20, 48),         // soft warm ground shadow
+            heart: Rgba::rgb(255, 118, 152),           // #FF7698 floating hearts
+            sleep_zzz: Rgba::rgb(125, 186, 255),       // #7DBAFF dreamy sky Zzz
+            sparkle: Rgba::rgb(253, 204, 58),          // #FDCC3A twinkling gold stars
+            shadow: Rgba::new(56, 24, 28, 44),         // soft ground contact shadow
         }
     }
 
-    /// Alias kept for API stability (`milkbird_day` returns the signature Red Bird palette).
     pub const fn milkbird_day() -> Self {
-        Self::milkbird_red()
+        Self::milkbird_original()
     }
 }
 
 impl Default for Palette {
     fn default() -> Self {
-        Self::milkbird_red()
+        Self::milkbird_original()
     }
 }
