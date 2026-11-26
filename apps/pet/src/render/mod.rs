@@ -694,44 +694,51 @@ impl PetRenderer {
         }
     }
 
-    /// IP Anchor #2a: Vacant-cute hollow green eyes inspired by Nailong!
-    /// Clean white sclera + luminous jade/emerald green iris + deep hollow void pupil.
-    /// Uses layered filled ellipses instead of cubic stroke tessellation or per-eye gradients
-    /// to keep Retina @2x rasterization well under the 1.5 ms budget.
+    /// IP Anchor #2a: Nailong-faithful hollow olive-green eyes!
+    /// Soft white eye socket (sclera visible on outer edge, no harsh cartoon ring),
+    /// deep moss-green outer iris + luminous olive-emerald lower glow + large glossy
+    /// dark-forest hollow pupil occupying the upper-center, with iconic 4-point star
+    /// catchlights when happy/excited and sloped eyelids when focused.
     fn draw_hollow_green_eyes(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
         let ey = m.eye_y;
-        let eye_positions = [(-5.5f32, ey), (18.5f32, ey)];
+        // (center_x, center_y, inward_bias) — iris hugs slightly inward so white sclera peeks
+        // cleanly on the outer corners just like Nailong in reference image 2!
+        let eye_specs = [(-5.8f32, ey, 1.35f32), (18.8f32, ey, -1.35f32)];
         let sclera = Self::solid_paint(self.palette.eye_sclera);
         let pupil = Self::solid_paint(self.palette.eye_pupil);
         let sparkle = Self::solid_paint(self.palette.eye_sparkle);
-        let outline = Self::solid_paint(self.palette.outline);
+        let socket_shadow = Self::solid_paint(self.palette.outline.with_alpha(0.35));
+        let lid_lash = Self::solid_paint(self.palette.eye_pupil.with_alpha(0.85));
 
         let gx = pose.gaze_x.clamp(-1.0, 1.0) * 1.4;
         let gy = pose.gaze_y.clamp(-1.0, 1.0) * 1.1;
 
-        for &(ex, ey) in &eye_positions {
+        for &(ex, ey, inward) in &eye_specs {
+            let ix = ex + inward + gx * 0.45;
+            let iy = ey + gy * 0.45;
             match pose.eyes {
                 EyeExpression::Normal => {
-                    // 1. Dark rim + clean white sclera (fast layered fill, zero stroke tessellation).
-                    if let Some(rim) = ellipse_path(ex, ey, 7.8, 8.3) {
+                    // 1. Subtle recessed socket shadow + soft white sclera (no hard black circle!).
+                    if let Some(sh) = ellipse_path(ex, ey - 0.4, 7.6, 7.2) {
                         self.pixmap
-                            .fill_path(&rim, &outline, FillRule::Winding, body_tx, None);
+                            .fill_path(&sh, &socket_shadow, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(white) = ellipse_path(ex, ey, 6.8, 7.3) {
+                    if let Some(white) = ellipse_path(ex, ey + 0.2, 7.2, 6.7) {
                         self.pixmap
                             .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
                     }
-                    // 2. Luminous emerald-jade green iris.
-                    self.draw_green_iris(body_tx, ex + gx * 0.45, ey + gy * 0.45, 5.4, 5.9);
-                    // 3. Large deep hollow void pupil (vacant-cute "空洞感").
-                    if let Some(pup) = ellipse_path(ex + gx * 0.55, ey + gy * 0.55, 3.8, 4.2) {
+                    // 2. Glossy Nailong olive-emerald hollow iris + large dark upper-center pupil.
+                    self.draw_nailong_green_iris(body_tx, ix, iy + 0.2, 5.5, 5.7);
+                    // 3. Soft dark upper lash curve (top only, authentic 3D plush/Nailong feel).
+                    let mut lash = PathBuilder::new();
+                    lash.move_to(ex - 6.2, ey - 2.6);
+                    lash.quad_to(ex, ey - 7.8, ex + 6.2, ey - 2.6);
+                    if let Some(lp) = lash.finish() {
                         self.pixmap
-                            .fill_path(&pup, &pupil, FillRule::Winding, body_tx, None);
+                            .stroke_path(&lp, &lid_lash, &self.stroke_outline(1.55), body_tx, None);
                     }
-                    // 4. Minimal tiny glass pinpoint at upper rim only.
-                    if let Some(pin) =
-                        ellipse_path(ex + gx * 0.55 - 2.1, ey + gy * 0.55 - 2.4, 1.25, 1.25)
-                    {
+                    // 4. Tiny vacant upper-left pinpoint highlight (keeps center deeply hollow!).
+                    if let Some(pin) = ellipse_path(ix - 1.9, iy - 1.9, 1.15, 1.15) {
                         self.pixmap
                             .fill_path(&pin, &sparkle, FillRule::Winding, body_tx, None);
                     }
@@ -741,49 +748,49 @@ impl PetRenderer {
                     pb.move_to(ex - 5.4, ey + 0.6);
                     pb.quad_to(ex, ey + 3.4, ex + 5.4, ey + 0.4);
                     if let Some(arc) = pb.finish() {
-                        let rim = Self::solid_paint(self.palette.eye_sclera.with_alpha(0.8));
+                        let rim = Self::solid_paint(self.palette.eye_sclera.with_alpha(0.7));
                         self.pixmap
-                            .stroke_path(&arc, &rim, &self.stroke_outline(4.2), body_tx, None);
+                            .stroke_path(&arc, &rim, &self.stroke_outline(3.8), body_tx, None);
                         self.pixmap
-                            .stroke_path(&arc, &pupil, &self.stroke_outline(2.4), body_tx, None);
+                            .stroke_path(&arc, &pupil, &self.stroke_outline(2.3), body_tx, None);
                     }
                 }
                 EyeExpression::Happy => {
-                    // Inspired by Nailong's joyful starry green eyes!
-                    if let Some(rim) = ellipse_path(ex, ey, 8.0, 8.3) {
+                    // Exact Nailong left-pose joyful starry olive-green eyes!
+                    if let Some(sh) = ellipse_path(ex, ey - 0.3, 7.8, 7.4) {
                         self.pixmap
-                            .fill_path(&rim, &outline, FillRule::Winding, body_tx, None);
+                            .fill_path(&sh, &socket_shadow, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(white) = ellipse_path(ex, ey, 7.0, 7.3) {
+                    if let Some(white) = ellipse_path(ex, ey + 0.2, 7.4, 6.9) {
                         self.pixmap
                             .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_green_iris(body_tx, ex, ey, 5.6, 6.0);
-                    if let Some(pup) = ellipse_path(ex, ey, 3.9, 4.3) {
+                    self.draw_nailong_green_iris(body_tx, ix, iy + 0.1, 5.7, 5.9);
+                    // Big glowing 4-point white star + mini upper-right star just like ref image 2!
+                    if let Some(star_big) = star4_path(ix - 0.5, iy - 0.2, 4.1) {
                         self.pixmap
-                            .fill_path(&pup, &pupil, FillRule::Winding, body_tx, None);
+                            .fill_path(&star_big, &sparkle, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(star) = star4_path(ex - 0.6, ey - 0.4, 3.7) {
+                    if let Some(star_sm) = star4_path(ix + 2.8, iy - 2.3, 1.7) {
                         self.pixmap
-                            .fill_path(&star, &sparkle, FillRule::Winding, body_tx, None);
+                            .fill_path(&star_sm, &sparkle, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(dot) = ellipse_path(ex + 2.4, ey + 2.2, 1.0, 1.0) {
+                    let mut lash = PathBuilder::new();
+                    lash.move_to(ex - 6.4, ey - 2.6);
+                    lash.quad_to(ex, ey - 8.0, ex + 6.4, ey - 2.6);
+                    if let Some(lp) = lash.finish() {
                         self.pixmap
-                            .fill_path(&dot, &sparkle, FillRule::Winding, body_tx, None);
+                            .stroke_path(&lp, &lid_lash, &self.stroke_outline(1.5), body_tx, None);
                     }
                 }
                 EyeExpression::Drowsy => {
-                    if let Some(white) = ellipse_path(ex, ey + 0.8, 6.8, 5.5) {
+                    if let Some(white) = ellipse_path(ex, ey + 0.8, 7.0, 5.4) {
                         self.pixmap
                             .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_green_iris(body_tx, ex, ey + 1.2, 5.0, 4.1);
-                    if let Some(pup) = ellipse_path(ex, ey + 1.3, 3.4, 2.8) {
-                        self.pixmap
-                            .fill_path(&pup, &pupil, FillRule::Winding, body_tx, None);
-                    }
+                    self.draw_nailong_green_iris(body_tx, ix, iy + 1.1, 5.1, 4.2);
                     let cover = Self::solid_paint(self.palette.body_base);
-                    if let Some(lid_cover) = ellipse_path(ex, ey - 2.6, 7.8, 3.5) {
+                    if let Some(lid_cover) = ellipse_path(ex, ey - 2.6, 8.0, 3.6) {
                         self.pixmap
                             .fill_path(&lid_cover, &cover, FillRule::Winding, body_tx, None);
                     }
@@ -792,24 +799,21 @@ impl PetRenderer {
                     pb.line_to(ex + 6.6, ey - 0.4);
                     if let Some(lid) = pb.finish() {
                         self.pixmap
-                            .stroke_path(&lid, &pupil, &self.stroke_outline(2.2), body_tx, None);
+                            .stroke_path(&lid, &pupil, &self.stroke_outline(2.1), body_tx, None);
                     }
                 }
                 EyeExpression::Surprised => {
-                    if let Some(rim) = ellipse_path(ex, ey, 8.5, 9.0) {
+                    // Wide open white socket + smaller hollow Nailong green iris (hilarious shock!).
+                    if let Some(sh) = ellipse_path(ex, ey - 0.3, 8.3, 8.2) {
                         self.pixmap
-                            .fill_path(&rim, &outline, FillRule::Winding, body_tx, None);
+                            .fill_path(&sh, &socket_shadow, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(white) = ellipse_path(ex, ey, 7.5, 8.0) {
+                    if let Some(white) = ellipse_path(ex, ey + 0.1, 7.9, 7.8) {
                         self.pixmap
                             .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_green_iris(body_tx, ex, ey, 5.2, 5.6);
-                    if let Some(pup) = ellipse_path(ex, ey, 2.7, 3.0) {
-                        self.pixmap
-                            .fill_path(&pup, &pupil, FillRule::Winding, body_tx, None);
-                    }
-                    if let Some(pin) = ellipse_path(ex - 1.9, ey - 2.2, 1.2, 1.2) {
+                    self.draw_nailong_green_iris(body_tx, ex + inward * 0.5, ey, 4.9, 5.1);
+                    if let Some(pin) = ellipse_path(ex + inward * 0.5 - 1.6, ey - 1.7, 1.15, 1.15) {
                         self.pixmap
                             .fill_path(&pin, &sparkle, FillRule::Winding, body_tx, None);
                     }
@@ -818,34 +822,39 @@ impl PetRenderer {
                     brow.quad_to(ex, ey - 12.2, ex + 3.8, ey - 10.2);
                     if let Some(b) = brow.finish() {
                         self.pixmap
-                            .stroke_path(&b, &outline, &self.stroke_outline(1.8), body_tx, None);
+                            .stroke_path(&b, &lid_lash, &self.stroke_outline(1.75), body_tx, None);
                     }
                 }
                 EyeExpression::Focused => {
-                    if let Some(rim) = ellipse_path(ex, ey, 7.7, 7.6) {
-                        self.pixmap
-                            .fill_path(&rim, &outline, FillRule::Winding, body_tx, None);
-                    }
-                    if let Some(white) = ellipse_path(ex, ey, 6.7, 6.6) {
+                    // Exact Nailong middle/right-pose grumpy/focused sloped upper eyelid over green eye!
+                    if let Some(white) = ellipse_path(ex, ey + 0.4, 7.2, 6.4) {
                         self.pixmap
                             .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_green_iris(body_tx, ex + gx * 0.4, ey + gy * 0.4, 5.2, 5.3);
-                    if let Some(pup) = ellipse_path(ex + gx * 0.5, ey + gy * 0.5, 3.6, 3.7) {
-                        self.pixmap
-                            .fill_path(&pup, &pupil, FillRule::Winding, body_tx, None);
-                    }
-                    if let Some(pin) = ellipse_path(ex - 1.8, ey - 1.9, 1.15, 1.15) {
+                    self.draw_nailong_green_iris(body_tx, ix, iy + 0.6, 5.4, 5.2);
+                    if let Some(pin) = ellipse_path(ix - 1.7, iy - 1.2, 1.1, 1.1) {
                         self.pixmap
                             .fill_path(&pin, &sparkle, FillRule::Winding, body_tx, None);
                     }
-                    let slant = if ex < 5.0 { 2.6 } else { -2.6 };
-                    let mut bpb = PathBuilder::new();
-                    bpb.move_to(ex - 6.6, ey - 6.8 - slant * 0.6);
-                    bpb.line_to(ex + 6.6, ey - 6.8 + slant * 0.6);
-                    if let Some(b) = bpb.finish() {
+                    // Sloped coral-red upper eyelid clipping top-inner eye just like Nailong!
+                    let slant = if ex < 5.0 { 3.2 } else { -3.2 };
+                    let mut cover = PathBuilder::new();
+                    cover.move_to(ex - 8.5, ey - 9.5);
+                    cover.line_to(ex + 8.5, ey - 9.5);
+                    cover.line_to(ex + 8.5, ey - 3.8 + slant);
+                    cover.line_to(ex - 8.5, ey - 3.8 - slant);
+                    cover.close();
+                    if let Some(cp) = cover.finish() {
+                        let body_p = Self::solid_paint(self.palette.body_base);
                         self.pixmap
-                            .stroke_path(&b, &outline, &self.stroke_outline(2.4), body_tx, None);
+                            .fill_path(&cp, &body_p, FillRule::Winding, body_tx, None);
+                    }
+                    let mut brow = PathBuilder::new();
+                    brow.move_to(ex - 6.8, ey - 3.8 - slant);
+                    brow.line_to(ex + 6.8, ey - 3.8 + slant);
+                    if let Some(b) = brow.finish() {
+                        self.pixmap
+                            .stroke_path(&b, &lid_lash, &self.stroke_outline(2.15), body_tx, None);
                     }
                 }
                 EyeExpression::Sleeping => {
@@ -853,28 +862,38 @@ impl PetRenderer {
                     pb.move_to(ex - 5.4, ey - 0.4);
                     pb.quad_to(ex, ey + 4.2, ex + 5.4, ey - 0.4);
                     if let Some(arc) = pb.finish() {
-                        let rim = Self::solid_paint(self.palette.eye_sclera.with_alpha(0.75));
+                        let rim = Self::solid_paint(self.palette.eye_sclera.with_alpha(0.7));
                         self.pixmap
-                            .stroke_path(&arc, &rim, &self.stroke_outline(4.2), body_tx, None);
+                            .stroke_path(&arc, &rim, &self.stroke_outline(3.8), body_tx, None);
                         self.pixmap
-                            .stroke_path(&arc, &pupil, &self.stroke_outline(2.4), body_tx, None);
+                            .stroke_path(&arc, &pupil, &self.stroke_outline(2.3), body_tx, None);
                     }
                 }
             }
         }
     }
 
-    /// Fast two-layer emerald-jade iris (outer deep jade rim + bright inner green glow, zero heap alloc).
-    fn draw_green_iris(&mut self, body_tx: Transform, cx: f32, cy: f32, rx: f32, ry: f32) {
-        if let Some(outer) = ellipse_path(cx, cy, rx, ry) {
+    /// Nailong-faithful glossy olive-emerald iris with large deep dark-forest upper-center pupil.
+    /// The bright translucent green ring glows primarily around the lower & side crescent, while
+    /// the top/center melts into a deep hollow void pupil (zero heap allocation).
+    fn draw_nailong_green_iris(&mut self, body_tx: Transform, cx: f32, cy: f32, rx: f32, ry: f32) {
+        // 1. Deep moss-green outer iris rim.
+        if let Some(rim) = ellipse_path(cx, cy, rx, ry) {
             let paint = Self::solid_paint(self.palette.eye_green_outer);
             self.pixmap
-                .fill_path(&outer, &paint, FillRule::Winding, body_tx, None);
+                .fill_path(&rim, &paint, FillRule::Winding, body_tx, None);
         }
-        if let Some(inner) = ellipse_path(cx, cy + ry * 0.08, rx * 0.86, ry * 0.84) {
+        // 2. Luminous olive-emerald green glow shifted slightly downward to form Nailong's green lower crescent!
+        if let Some(glow) = ellipse_path(cx, cy + ry * 0.14, rx * 0.85, ry * 0.80) {
             let paint = Self::solid_paint(self.palette.eye_green_inner);
             self.pixmap
-                .fill_path(&inner, &paint, FillRule::Winding, body_tx, None);
+                .fill_path(&glow, &paint, FillRule::Winding, body_tx, None);
+        }
+        // 3. Deep hollow dark-forest pupil occupying upper-center ~74% of the iris!
+        if let Some(pup) = ellipse_path(cx, cy - ry * 0.10, rx * 0.72, ry * 0.74) {
+            let paint = Self::solid_paint(self.palette.eye_pupil);
+            self.pixmap
+                .fill_path(&pup, &paint, FillRule::Winding, body_tx, None);
         }
     }
 
@@ -962,33 +981,10 @@ impl PetRenderer {
         let hair_fill = Self::solid_paint(self.palette.hair_base);
         let hair_hi = Self::solid_paint(self.palette.hair_highlight);
 
-        // Step A: Draw customizable hairstyle base tufts (4 distinct presets).
+        // Step A: Draw customizable hairstyle base (4 distinct presets).
+        // `FlameSweep` uses the exact reference-image-1 flame directly without extra overlapping hair spikes.
         match self.appearance.hair {
-            HairStyle::FlameSweep => {
-                // Iconic stepped side feathers framing the sweeping crown little flame.
-                let tx = crown_tx.pre_rotate(sway_deg * 0.65);
-                let mut pb = PathBuilder::new();
-                pb.move_to(-6.0, 2.5);
-                pb.quad_to(-2.0, -7.5, 3.0, -9.0);
-                pb.quad_to(2.0, -4.5, 4.0, -2.5);
-                pb.quad_to(7.5, -7.8, 12.0, -7.8);
-                pb.quad_to(9.5, -2.5, 11.0, -0.5);
-                pb.quad_to(14.5, -4.2, 16.5, -3.2);
-                pb.cubic_to(14.8, 1.0, 11.2, 3.4, 7.2, 3.6);
-                pb.quad_to(0.0, 4.6, -6.0, 2.5);
-                pb.close();
-                if let Some(p) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&p, &hair_fill, FillRule::Winding, tx, None);
-                    self.pixmap.stroke_path(
-                        &p,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        tx,
-                        None,
-                    );
-                }
-            }
+            HairStyle::FlameSweep => {}
             HairStyle::FluffyCloud => {
                 // Soft fluffy 3-puff cloud curl resting on top of the forehead!
                 let tx = crown_tx.pre_rotate(sway_deg * 0.45);
@@ -1058,41 +1054,52 @@ impl PetRenderer {
             }
         }
 
-        // Step B: IP Anchor #1 — The Living Little Flame ("小火苗") mounted atop EVERY hairstyle!
-        let (fx, fy, base_rot) = match self.appearance.hair {
-            HairStyle::FlameSweep => (-5.0, 1.5, -4.0),
-            HairStyle::FluffyCloud => (1.5, -7.2, 2.0),
-            HairStyle::TwinSparks => (0.0, 0.5, 0.0),
-            HairStyle::BangsTuft => (1.0, -4.2, 0.0),
+        // Step B: IP Anchor #1 — Exact Reference Image 1 Little Flame ("小火苗") silhouette!
+        // Sleek S-curved tall flame blade sweeping up-left + 3 sharp angular mini-spikes on the right.
+        let (fx, fy, f_mult) = match self.appearance.hair {
+            HairStyle::FlameSweep => (0.5, 1.2, 1.05),
+            HairStyle::FluffyCloud => (1.5, -7.2, 0.86),
+            HairStyle::TwinSparks => (0.5, 0.8, 0.90),
+            HairStyle::BangsTuft => (1.0, -4.2, 0.88),
         };
-        let flicker = 1.0 + 0.05 * pose.breath + 0.08 * pose.badge_glow;
-        let fscale = self.appearance.flame_scale * flicker;
+        let flicker = 1.0 + 0.04 * pose.breath + 0.07 * pose.badge_glow;
+        let fscale = self.appearance.flame_scale * f_mult * flicker;
         let flame_tx = crown_tx
             .pre_translate(fx, fy)
-            .pre_rotate(base_rot + sway_deg)
+            .pre_rotate(sway_deg)
             .pre_scale(fscale, fscale);
 
-        // Outer dynamic teardrop flame curving playfully like a tiny living campfire spark!
-        let mut outer = PathBuilder::new();
-        outer.move_to(-6.2, 1.2);
-        outer.cubic_to(-10.8, -5.8, -7.5, -16.2, -10.5, -23.5);
-        outer.cubic_to(-2.8, -19.2, 3.8, -12.8, 5.8, -5.0);
-        outer.cubic_to(7.5, -9.0, 10.2, -10.2, 10.6, -5.6);
-        outer.cubic_to(10.8, -0.8, 6.2, 3.2, 0.2, 3.4);
-        outer.cubic_to(-3.2, 3.5, -5.0, 2.5, -6.2, 1.2);
-        outer.close();
+        // Faithful trace of reference image 1's fiery S-curve crest + 3 stepped sharp spikes!
+        let mut flame = PathBuilder::new();
+        flame.move_to(-6.2, 2.8);
+        // Left edge of tall S-curved flame blade: bows gently right then sweeps gracefully up-left to a sharp tip
+        flame.cubic_to(-8.6, -3.5, -3.2, -10.8, -11.4, -24.8);
+        // Right edge of tall S-curved flame blade: sleek taper sweeping back down into the first valley
+        flame.cubic_to(-3.8, -19.2, -0.2, -11.5, -1.6, -4.6);
+        // Sharp mini-spike #1
+        flame.line_to(1.8, -10.6);
+        flame.line_to(2.8, -4.8);
+        // Sharp mini-spike #2 (slightly wider & angled right)
+        flame.line_to(7.8, -10.4);
+        flame.line_to(7.2, -4.0);
+        // Sharp mini-spike #3 (leaning outward-right)
+        flame.line_to(13.8, -8.8);
+        flame.cubic_to(13.2, -3.0, 11.4, 0.8, 8.6, 2.8);
+        // Rounded base tucking cleanly onto the head/hair
+        flame.quad_to(1.2, 5.2, -6.2, 2.8);
+        flame.close();
 
-        if let Some(flame_path) = outer.finish() {
+        if let Some(flame_path) = flame.finish() {
             let mut paint = Paint {
                 anti_alias: true,
                 ..Paint::default()
             };
             if let Some(shader) = LinearGradient::new(
-                Point::from_xy(-8.0, -23.0),
-                Point::from_xy(2.0, 3.5),
+                Point::from_xy(-10.0, -24.5),
+                Point::from_xy(6.0, 3.5),
                 vec![
                     GradientStop::new(0.0, self.palette.flame_core.to_skia()),
-                    GradientStop::new(0.45, self.palette.flame_mid.to_skia()),
+                    GradientStop::new(0.42, self.palette.flame_mid.to_skia()),
                     GradientStop::new(1.0, self.palette.flame_outer.to_skia()),
                 ],
                 SpreadMode::Pad,
@@ -1105,23 +1112,12 @@ impl PetRenderer {
             self.pixmap
                 .fill_path(&flame_path, &paint, FillRule::Winding, flame_tx, None);
 
-            // Glowing bright yellow-gold inner teardrop core so it unmistakably reads as a live flame!
-            let mut core = PathBuilder::new();
-            core.move_to(-2.6, 1.0);
-            core.cubic_to(-5.2, -3.2, -3.5, -9.2, -4.6, -13.5);
-            core.cubic_to(-0.5, -10.5, 3.6, -6.2, 3.8, -1.6);
-            core.cubic_to(3.8, 1.2, 0.2, 2.4, -2.6, 1.0);
-            core.close();
-            if let Some(core_path) = core.finish() {
-                let core_paint = Self::solid_paint(self.palette.flame_core.with_alpha(0.92));
-                self.pixmap
-                    .fill_path(&core_path, &core_paint, FillRule::Winding, flame_tx, None);
-            }
-
+            // Delicate warm crimson contour so the sleek orange flame silhouette pops cleanly on white & dark desktops.
+            let flame_rim = Self::solid_paint(self.palette.outline.with_alpha(0.72));
             self.pixmap.stroke_path(
                 &flame_path,
-                &outline,
-                &self.stroke_outline(self.rig.outline_width * 0.82),
+                &flame_rim,
+                &self.stroke_outline(1.35),
                 flame_tx,
                 None,
             );
