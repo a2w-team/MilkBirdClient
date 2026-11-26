@@ -240,6 +240,9 @@ impl PetRenderer {
         // 2. Tail feathers behind body.
         self.draw_tail_feathers(body_tx, pose, &metrics);
 
+        // 2b. Back hair layer for hairstyles with trailing twin-tails or Shamate wolf-tail spikes!
+        self.draw_hair_back(body_tx, pose, &metrics);
+
         // 3. Back wing peeking cleanly on right contour.
         self.draw_back_wing(body_tx, pose, &metrics);
 
@@ -977,24 +980,165 @@ impl PetRenderer {
         }
     }
 
-    /// IP Anchor #1 + Custom Hairstyle: Renders 4 genuinely distinct, head-hugging chibi hairstyles
-    /// (seamless ahoge / milk-tea fluffy curls / twin buns / cocoa bob bangs) with the signature
+    /// Back-layer hair drawn behind the body (twin-tails, Shamate back spikes & wolf-tail)
+    /// for true 2.5D chibi depth!
+    fn draw_hair_back(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
+        let sway_deg = pose.ahoge_angle.to_degrees() + pose.scarf_sway.to_degrees() * 0.5;
+        let crown_tx = body_tx.pre_translate(0.0, m.crown_y);
+        let head_scale_x = m.head_rx / 34.5;
+        let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
+        let outline = Self::solid_paint(self.palette.outline);
+
+        match self.appearance.hair {
+            HairStyle::TwinTails => {
+                // Bouncy flowing twin-tails sweeping outward & downward behind both sides of the head!
+                let fill = Self::solid_paint(self.palette.hair_cocoa);
+                let hi = Self::solid_paint(self.palette.hair_cocoa_hi);
+                for &side in &[-1.0f32, 1.0f32] {
+                    let tx = cap_tx
+                        .pre_translate(side * 28.0, 10.0)
+                        .pre_rotate(side * -6.0 + sway_deg * 0.65);
+                    let mut pb = PathBuilder::new();
+                    pb.move_to(0.0, -4.0);
+                    pb.cubic_to(side * 14.0, -6.0, side * 22.0, 8.0, side * 18.5, 25.5);
+                    pb.cubic_to(side * 15.0, 32.0, side * 7.5, 31.5, side * 5.0, 24.0);
+                    pb.cubic_to(side * 8.0, 22.0, side * 9.0, 14.0, side * 2.0, 6.0);
+                    pb.close();
+                    if let Some(p) = pb.finish() {
+                        self.pixmap
+                            .fill_path(&p, &fill, FillRule::Winding, tx, None);
+                        if let Some(sh) = ellipse_path(side * 11.5, 9.0, 3.2, 8.5) {
+                            self.pixmap
+                                .fill_path(&sh, &hi, FillRule::Winding, tx, None);
+                        }
+                        self.pixmap.stroke_path(
+                            &p,
+                            &outline,
+                            &self.stroke_outline(self.rig.outline_width * 0.85),
+                            tx,
+                            None,
+                        );
+                    }
+                }
+            }
+            HairStyle::ShamateSpike => {
+                // Huge dramatic Shamate spiky sea-urchin halo exploding outward around the head!
+                let fill = Self::solid_paint(self.palette.hair_shamate_dark);
+                let cyan = Self::solid_paint(self.palette.hair_shamate_cyan);
+                let tx = cap_tx.pre_rotate(sway_deg * 0.25);
+                let mut pb = PathBuilder::new();
+                pb.move_to(-32.0, 24.0);
+                // Left exploding spikes
+                pb.line_to(-50.0, 16.0);
+                pb.line_to(-37.0, 10.0);
+                pb.line_to(-52.0, 0.0);
+                pb.line_to(-34.0, -3.0);
+                pb.line_to(-43.0, -16.0);
+                pb.line_to(-22.0, -10.0);
+                // Top-left & top-right jagged rockstar peaks (leaving small center saddle for floating flame)
+                pb.line_to(-24.0, -24.0);
+                pb.line_to(-8.0, -12.0);
+                pb.line_to(10.0, -12.0);
+                pb.line_to(26.0, -25.0);
+                pb.line_to(24.0, -9.0);
+                // Right exploding spikes
+                pb.line_to(45.0, -15.0);
+                pb.line_to(35.0, -2.0);
+                pb.line_to(52.0, 2.0);
+                pb.line_to(38.0, 11.0);
+                pb.line_to(49.0, 18.0);
+                pb.line_to(32.0, 24.0);
+                pb.close();
+                if let Some(p) = pb.finish() {
+                    self.pixmap
+                        .fill_path(&p, &fill, FillRule::Winding, tx, None);
+                    self.pixmap.stroke_path(
+                        &p,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.82),
+                        tx,
+                        None,
+                    );
+                }
+                // Electric cyan streak on two outer Shamate spikes!
+                let mut streak = PathBuilder::new();
+                streak.move_to(-37.0, 0.0);
+                streak.line_to(-50.0, 0.5);
+                streak.line_to(-40.0, 7.0);
+                streak.close();
+                streak.move_to(37.0, -1.0);
+                streak.line_to(50.0, 2.0);
+                streak.line_to(39.0, 8.0);
+                streak.close();
+                if let Some(sp) = streak.finish() {
+                    self.pixmap
+                        .fill_path(&sp, &cyan, FillRule::Winding, tx, None);
+                }
+            }
+            HairStyle::ShamateFlame => {
+                // Iconic silver-white Shamate wolf-tail mullet spikes fanning out behind the lower cheeks!
+                let fill = Self::solid_paint(self.palette.hair_shamate_silver);
+                let pink = Self::solid_paint(self.palette.hair_shamate_pink);
+                let tx = cap_tx.pre_rotate(sway_deg * 0.35);
+                let mut pb = PathBuilder::new();
+                pb.move_to(-32.0, 14.0);
+                pb.line_to(-48.0, 22.0);
+                pb.line_to(-36.0, 26.0);
+                pb.line_to(-46.0, 38.0);
+                pb.line_to(-28.0, 34.0);
+                pb.line_to(28.0, 34.0);
+                pb.line_to(47.0, 37.0);
+                pb.line_to(36.0, 25.0);
+                pb.line_to(49.0, 20.0);
+                pb.line_to(32.0, 13.0);
+                pb.close();
+                if let Some(p) = pb.finish() {
+                    self.pixmap
+                        .fill_path(&p, &fill, FillRule::Winding, tx, None);
+                    self.pixmap.stroke_path(
+                        &p,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.8),
+                        tx,
+                        None,
+                    );
+                }
+                // Neon-magenta wolf-tail tip accents!
+                let mut tips = PathBuilder::new();
+                tips.move_to(-39.0, 31.0);
+                tips.line_to(-46.0, 38.0);
+                tips.line_to(-33.0, 34.0);
+                tips.close();
+                tips.move_to(39.0, 30.0);
+                tips.line_to(47.0, 37.0);
+                tips.line_to(34.0, 33.0);
+                tips.close();
+                if let Some(tp) = tips.finish() {
+                    self.pixmap
+                        .fill_path(&tp, &pink, FillRule::Winding, tx, None);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// IP Anchor #1 + Custom Hairstyle: Renders 8 distinct, natural/fun hairstyles (from cute twin-tails,
+    /// mushroom bob, curly bangs, and slick-back to wild Shamate spikes!) with the signature
     /// reference-image-1 Little Flame ("小火苗") floating cleanly in mid-air above the hairstyle!
     fn draw_hair_and_little_flame(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
         let sway_deg = pose.ahoge_angle.to_degrees() + pose.scarf_sway.to_degrees() * 0.35;
         let crown_tx = body_tx.pre_translate(0.0, m.crown_y);
         let head_scale_x = m.head_rx / 34.5;
+        let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
         let outline = Self::solid_paint(self.palette.outline);
 
-        // Step A: Draw natural head-hugging customizable hairstyle.
+        // Step A: Draw front/crown customizable hairstyle (8 distinct styles).
         // Returns local clearance `hair_top_y` so the floating little flame hovers cleanly above it.
         let hair_top_y: f32 = match self.appearance.hair {
-            HairStyle::FlameSweep => {
-                // Style 1: "自然呆毛" — Clean, seamless curved twin-strand bird ahoge sprouting
-                // organically from the crown with NO horizontal seam across the forehead!
+            HairStyle::NaturalAhoge => {
+                // Style 1: "自然呆毛" — Seamless curved twin-strand bird ahoge.
                 let tx = crown_tx.pre_translate(1.0, 1.0).pre_rotate(sway_deg * 0.55);
                 let mut pb = PathBuilder::new();
-                // Tall slender curved strand + delicate small side curl
                 pb.move_to(-3.5, 1.5);
                 pb.cubic_to(-7.5, -4.5, -4.5, -13.0, 3.8, -13.5);
                 pb.cubic_to(-0.5, -9.8, 1.0, -5.0, 1.8, -1.2);
@@ -1012,7 +1156,6 @@ impl PetRenderer {
                         tx,
                         None,
                     );
-                    // Seamlessly blend the root into the coral forehead so it grows naturally out of the head!
                     if let Some(seam) = ellipse_path(0.3, 2.5, 5.2, 2.6) {
                         self.pixmap
                             .fill_path(&seam, &fill, FillRule::Winding, tx, None);
@@ -1020,22 +1163,219 @@ impl PetRenderer {
                 }
                 -11.5
             }
-            HairStyle::FluffyCloud => {
-                // Style 2: "奶咖软卷" — Cozy creamy milk-tea curly hair wrapping smoothly across the
-                // upper dome & framing both temples with soft airy bangs above the green eyes!
-                let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
+            HairStyle::TwinTails => {
+                // Style 2: "元气双马尾" — Cocoa cap with feathery air bangs + golden twin-tail ribbons!
+                let fill = Self::solid_paint(self.palette.hair_cocoa);
+                let hi = Self::solid_paint(self.palette.hair_cocoa_hi);
+                let gold = Self::solid_paint(self.palette.hair_tie_gold);
+
                 let mut pb = PathBuilder::new();
-                // Outer fluffy curved crown hugging the upper head cleanly
-                pb.move_to(-34.5, 19.5);
-                pb.cubic_to(-36.5, 4.0, -24.0, -6.8, 0.0, -6.8);
-                pb.cubic_to(24.0, -6.8, 36.5, 4.0, 34.5, 19.5);
-                // Soft curly side locks & airy scalloped curls framing forehead (clears eyes cleanly!)
-                pb.quad_to(30.0, 22.0, 27.5, 15.0);
-                pb.quad_to(23.5, 18.0, 18.5, 13.0);
-                pb.quad_to(11.5, 17.5, 4.5, 12.2);
-                pb.quad_to(-2.5, 17.8, -10.5, 12.5);
-                pb.quad_to(-18.0, 17.5, -24.5, 13.2);
-                pb.quad_to(-29.5, 20.5, -34.5, 19.5);
+                pb.move_to(-33.5, 19.0);
+                pb.cubic_to(-35.0, 3.5, -22.5, -5.2, 0.0, -5.2);
+                pb.cubic_to(22.5, -5.2, 35.0, 3.5, 33.5, 19.0);
+                pb.quad_to(28.5, 19.5, 26.5, 13.5);
+                pb.line_to(18.5, 14.0);
+                pb.line_to(13.5, 9.5);
+                pb.line_to(9.5, 14.2);
+                pb.line_to(-3.5, 14.2);
+                pb.line_to(-7.5, 9.8);
+                pb.line_to(-12.5, 14.0);
+                pb.line_to(-26.5, 13.5);
+                pb.quad_to(-28.5, 19.5, -33.5, 19.0);
+                pb.close();
+                if let Some(hair) = pb.finish() {
+                    self.pixmap
+                        .fill_path(&hair, &fill, FillRule::Winding, cap_tx, None);
+                    for &(sx, rx) in &[(-10.0, 7.0), (10.5, 7.5)] {
+                        if let Some(sh) = ellipse_path(sx, 2.5, rx, 1.9) {
+                            self.pixmap
+                                .fill_path(&sh, &hi, FillRule::Winding, cap_tx, None);
+                        }
+                    }
+                    self.pixmap.stroke_path(
+                        &hair,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.85),
+                        cap_tx,
+                        None,
+                    );
+                }
+                // Cute golden ribbon ties clamping the left & right twin-tail roots!
+                for &side in &[-1.0f32, 1.0f32] {
+                    if let Some(tie) = ellipse_path(side * 32.0, 10.5, 4.2, 3.4) {
+                        self.pixmap
+                            .fill_path(&tie, &gold, FillRule::Winding, cap_tx, None);
+                        self.pixmap.stroke_path(
+                            &tie,
+                            &outline,
+                            &self.stroke_outline(1.5),
+                            cap_tx,
+                            None,
+                        );
+                    }
+                }
+                -5.5
+            }
+            HairStyle::SlickBack => {
+                // Style 3: "霸总大背头" — Glossy sculpted pompadour / slicked-back boss hair
+                // swept cleanly up & back off the forehead with crisp comb highlight lines!
+                let mut pb = PathBuilder::new();
+                pb.move_to(-34.0, 17.0);
+                // Sharp sculpted sideburns sweeping up into dramatic tall pompadour wave
+                pb.cubic_to(-36.5, 2.0, -26.0, -10.5, -8.0, -11.5);
+                pb.cubic_to(6.0, -12.5, 24.0, -9.5, 31.0, -2.0);
+                // Back-swept cowlick tail at upper-right
+                pb.quad_to(37.5, 3.5, 34.0, 16.5);
+                // Clean masculine hairline exposing forehead boldly above the green eyes!
+                pb.quad_to(29.5, 16.5, 27.5, 10.0);
+                pb.cubic_to(18.0, 5.5, 10.0, 4.2, 1.0, 7.2);
+                pb.cubic_to(-9.5, 4.0, -20.5, 5.8, -27.5, 10.5);
+                pb.quad_to(-29.5, 17.5, -34.0, 17.0);
+                pb.close();
+
+                if let Some(hair) = pb.finish() {
+                    let mut paint = Paint {
+                        anti_alias: true,
+                        ..Paint::default()
+                    };
+                    if let Some(shader) = LinearGradient::new(
+                        Point::from_xy(-10.0, -12.0),
+                        Point::from_xy(10.0, 16.0),
+                        vec![
+                            GradientStop::new(0.0, self.palette.hair_jet_hi.to_skia()),
+                            GradientStop::new(0.45, self.palette.hair_jet.to_skia()),
+                            GradientStop::new(1.0, self.palette.eye_pupil.to_skia()),
+                        ],
+                        SpreadMode::Pad,
+                        Transform::identity(),
+                    ) {
+                        paint.shader = shader;
+                    } else {
+                        paint.set_color(self.palette.hair_jet.to_skia());
+                    }
+                    self.pixmap
+                        .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
+
+                    // Sleek combed-back pomade gloss streaks!
+                    let gloss = Self::solid_paint(self.palette.hair_jet_hi.with_alpha(0.85));
+                    let mut streaks = PathBuilder::new();
+                    streaks.move_to(-18.0, 0.5);
+                    streaks.quad_to(-4.0, -7.8, 16.0, -4.5);
+                    streaks.move_to(-10.0, 3.0);
+                    streaks.quad_to(4.0, -3.5, 22.0, -0.5);
+                    if let Some(sp) = streaks.finish() {
+                        self.pixmap.stroke_path(
+                            &sp,
+                            &gloss,
+                            &self.stroke_outline(2.0),
+                            cap_tx,
+                            None,
+                        );
+                    }
+
+                    self.pixmap.stroke_path(
+                        &hair,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.85),
+                        cap_tx,
+                        None,
+                    );
+                }
+                -11.0
+            }
+            HairStyle::MushroomBob => {
+                // Style 4: "憨萌蘑菇头" — Plump dome-shaped chestnut bowl/mushroom cut with thick
+                // rounded straight bangs & glossy angel-ring highlight!
+                let mut pb = PathBuilder::new();
+                pb.move_to(-38.0, 18.5);
+                pb.cubic_to(-41.5, -1.0, -26.0, -10.5, 0.0, -10.5);
+                pb.cubic_to(26.0, -10.5, 41.5, -1.0, 38.0, 18.5);
+                // Classic plush straight-curved mushroom rim right across the brow line
+                pb.quad_to(31.0, 21.0, 27.0, 14.5);
+                pb.quad_to(0.0, 16.2, -27.0, 14.5);
+                pb.quad_to(-31.0, 21.0, -38.0, 18.5);
+                pb.close();
+
+                if let Some(hair) = pb.finish() {
+                    let mut paint = Paint {
+                        anti_alias: true,
+                        ..Paint::default()
+                    };
+                    if let Some(shader) = LinearGradient::new(
+                        Point::from_xy(0.0, -10.5),
+                        Point::from_xy(0.0, 20.0),
+                        vec![
+                            GradientStop::new(0.0, self.palette.hair_chestnut_hi.to_skia()),
+                            GradientStop::new(0.55, self.palette.hair_chestnut.to_skia()),
+                            GradientStop::new(1.0, self.palette.hair_cocoa.to_skia()),
+                        ],
+                        SpreadMode::Pad,
+                        Transform::identity(),
+                    ) {
+                        paint.shader = shader;
+                    } else {
+                        paint.set_color(self.palette.hair_chestnut.to_skia());
+                    }
+                    self.pixmap
+                        .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
+
+                    // Iconic shiny mushroom-cut angel ring highlight across the dome!
+                    let ring_paint =
+                        Self::solid_paint(self.palette.hair_cream.with_alpha(0.55));
+                    let mut ring = PathBuilder::new();
+                    ring.move_to(-22.0, 4.0);
+                    ring.quad_to(0.0, -2.5, 22.0, 4.0);
+                    if let Some(rp) = ring.finish() {
+                        self.pixmap.stroke_path(
+                            &rp,
+                            &ring_paint,
+                            &self.stroke_outline(3.2),
+                            cap_tx,
+                            None,
+                        );
+                    }
+
+                    // Tiny subtle bang texture lines.
+                    let notch = Self::solid_paint(self.palette.outline.with_alpha(0.45));
+                    let mut lines = PathBuilder::new();
+                    for &lx in &[-13.0, 1.5, 14.0] {
+                        lines.move_to(lx, 10.5);
+                        lines.line_to(lx, 15.2);
+                    }
+                    if let Some(lp) = lines.finish() {
+                        self.pixmap.stroke_path(
+                            &lp,
+                            &notch,
+                            &self.stroke_outline(1.5),
+                            cap_tx,
+                            None,
+                        );
+                    }
+
+                    self.pixmap.stroke_path(
+                        &hair,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.85),
+                        cap_tx,
+                        None,
+                    );
+                }
+                -10.2
+            }
+            HairStyle::CurlyBangs => {
+                // Style 5: "奶咖卷刘海" — Cozy milk-tea caramel wavy hair with fluffy curly bangs
+                // and bouncy rolled side curls framing the cheeks!
+                let mut pb = PathBuilder::new();
+                pb.move_to(-35.5, 21.5);
+                pb.cubic_to(-38.0, 3.5, -24.5, -7.2, 0.0, -7.2);
+                pb.cubic_to(24.5, -7.2, 38.0, 3.5, 35.5, 21.5);
+                // Fluffy curled wave edge across forehead & cheeks
+                pb.cubic_to(34.5, 26.5, 26.5, 24.0, 26.0, 16.5);
+                pb.cubic_to(22.0, 20.5, 14.5, 19.0, 13.5, 12.8);
+                pb.cubic_to(8.5, 19.0, 1.5, 18.8, -1.5, 12.5);
+                pb.cubic_to(-6.0, 19.2, -14.0, 19.0, -16.5, 13.2);
+                pb.cubic_to(-21.5, 19.2, -26.5, 18.0, -26.8, 16.5);
+                pb.cubic_to(-27.5, 24.0, -34.5, 26.5, -35.5, 21.5);
                 pb.close();
 
                 if let Some(hair) = pb.finish() {
@@ -1045,7 +1385,7 @@ impl PetRenderer {
                     };
                     if let Some(shader) = LinearGradient::new(
                         Point::from_xy(0.0, -7.0),
-                        Point::from_xy(0.0, 20.0),
+                        Point::from_xy(0.0, 22.0),
                         vec![
                             GradientStop::new(0.0, self.palette.belly_highlight.to_skia()),
                             GradientStop::new(0.45, self.palette.hair_cream.to_skia()),
@@ -1061,11 +1401,21 @@ impl PetRenderer {
                     self.pixmap
                         .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
 
-                    // Delicate glossy curl shine band across the crown.
-                    if let Some(hi) = ellipse_path(2.0, 1.8, 14.0, 2.8) {
-                        let shine = Self::solid_paint(self.palette.belly_highlight.with_alpha(0.6));
-                        self.pixmap
-                            .fill_path(&hi, &shine, FillRule::Winding, cap_tx, None);
+                    // Cute subtle curl swirl strokes inside the bangs!
+                    let swirl_p = Self::solid_paint(self.palette.hair_cream_shade);
+                    let mut sw = PathBuilder::new();
+                    sw.move_to(-10.0, 13.0);
+                    sw.quad_to(-6.5, 9.2, -2.5, 12.2);
+                    sw.move_to(5.0, 13.0);
+                    sw.quad_to(9.0, 9.2, 12.8, 12.2);
+                    if let Some(sp) = sw.finish() {
+                        self.pixmap.stroke_path(
+                            &sp,
+                            &swirl_p,
+                            &self.stroke_outline(1.7),
+                            cap_tx,
+                            None,
+                        );
                     }
 
                     self.pixmap.stroke_path(
@@ -1076,22 +1426,17 @@ impl PetRenderer {
                         None,
                     );
                 }
-                -7.0
+                -7.2
             }
-            HairStyle::TwinSparks => {
-                // Style 3: "俏皮双丸子" — Adorable chibi twin buns (odango) with gold hair-ties +
-                // neat cocoa side-parted bangs hugging the upper forehead, leaving center open for the flame!
-                let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
+            HairStyle::TwinBuns => {
+                // Style 6: "俏皮双丸子" — Cocoa side-parted curtain bangs + symmetric round twin buns.
                 let bun_fill = Self::solid_paint(self.palette.hair_cocoa);
                 let bun_hi = Self::solid_paint(self.palette.hair_cocoa_hi);
                 let tie_gold = Self::solid_paint(self.palette.hair_tie_gold);
 
-                // Left & right cute round chibi hair buns perched on the upper crown corners!
                 for &side in &[-1.0f32, 1.0f32] {
-                    let bx = side * 24.5;
-                    let by = 1.5;
                     let btx = cap_tx
-                        .pre_translate(bx, by)
+                        .pre_translate(side * 24.5, 1.5)
                         .pre_rotate(side * (8.0 + sway_deg * 0.3));
                     if let Some(bun) = ellipse_path(0.0, 0.0, 10.5, 9.8) {
                         self.pixmap
@@ -1108,7 +1453,6 @@ impl PetRenderer {
                             None,
                         );
                     }
-                    // Cute little golden hair-tie collar at the base of each bun!
                     let mut tie = PathBuilder::new();
                     tie.move_to(-side * 8.2, 5.2);
                     tie.quad_to(-side * 3.0, 8.8, side * 1.5, 8.5);
@@ -1118,12 +1462,10 @@ impl PetRenderer {
                     }
                 }
 
-                // Sleek cocoa hair cap with cute center-parted curtain bangs hugging the forehead!
                 let mut pb = PathBuilder::new();
                 pb.move_to(-32.5, 17.5);
                 pb.cubic_to(-33.5, 3.0, -21.5, -4.5, 0.0, -4.5);
                 pb.cubic_to(21.5, -4.5, 33.5, 3.0, 32.5, 17.5);
-                // Side-parted curtain bangs sweeping gently outward above the green eyes
                 pb.quad_to(24.0, 13.5, 13.5, 12.2);
                 pb.quad_to(6.0, 11.2, 2.0, 7.2);
                 pb.quad_to(-3.5, 11.5, -13.5, 12.2);
@@ -1147,77 +1489,103 @@ impl PetRenderer {
                 }
                 -5.0
             }
-            HairStyle::BangsTuft => {
-                // Style 4: "元气齐刘海" — Classic glossy warm-cocoa chibi bob wrapping the full head
-                // with feathered air-bangs neatly framing the eyes and cute cheek side-locks!
-                let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
+            HairStyle::ShamateSpike => {
+                // Style 7: "葬爱爆炸头" — Iconic dramatic Shamate emo-purple front jagged bangs
+                // sweeping diagonally over one green eye with an electric-cyan highlight lock!
+                let fill = Self::solid_paint(self.palette.hair_shamate_dark);
+                let cyan = Self::solid_paint(self.palette.hair_shamate_cyan);
+
                 let mut pb = PathBuilder::new();
-                // Full smooth bob dome + cheek-framing side locks
-                pb.move_to(-36.2, 23.5);
-                pb.cubic_to(-38.0, 4.5, -24.5, -5.8, 0.0, -5.8);
-                pb.cubic_to(24.5, -5.8, 38.0, 4.5, 36.2, 23.5);
-                // Right cheek lock curving inward
-                pb.quad_to(32.5, 25.5, 30.2, 16.5);
-                // Clean straight-ish airy feathered bangs with 2 delicate parting notches!
-                pb.line_to(24.0, 13.0);
-                pb.line_to(18.5, 14.2);
-                pb.line_to(14.0, 10.2);
-                pb.line_to(10.0, 14.5);
-                pb.line_to(-4.5, 14.5);
-                pb.line_to(-8.5, 10.4);
-                pb.line_to(-13.0, 14.2);
-                pb.line_to(-24.0, 13.0);
-                // Left cheek lock curving inward
-                pb.line_to(-30.2, 16.5);
-                pb.quad_to(-32.5, 25.5, -36.2, 23.5);
+                pb.move_to(-34.5, 22.0);
+                pb.cubic_to(-35.5, 2.0, -23.0, -9.5, 0.0, -9.5);
+                pb.cubic_to(23.0, -9.5, 35.5, 2.0, 34.5, 21.0);
+                // Jagged dramatic emo bangs: swoops low across left eye (partially covering it!) + sharp points!
+                pb.line_to(26.5, 16.0);
+                pb.line_to(22.0, 22.5);
+                pb.line_to(14.0, 12.5);
+                pb.line_to(5.5, 23.0);
+                pb.line_to(-2.0, 14.5);
+                pb.line_to(-10.5, 27.5); // iconic Shamate eye-covering diagonal bang!
+                pb.line_to(-19.5, 16.0);
+                pb.line_to(-27.0, 25.0);
                 pb.close();
 
                 if let Some(hair) = pb.finish() {
-                    let mut paint = Paint {
-                        anti_alias: true,
-                        ..Paint::default()
-                    };
-                    if let Some(shader) = LinearGradient::new(
-                        Point::from_xy(0.0, -6.0),
-                        Point::from_xy(0.0, 24.0),
-                        vec![
-                            GradientStop::new(0.0, self.palette.hair_cocoa_hi.to_skia()),
-                            GradientStop::new(0.45, self.palette.hair_cocoa.to_skia()),
-                            GradientStop::new(1.0, self.palette.outline.to_skia()),
-                        ],
-                        SpreadMode::Pad,
-                        Transform::identity(),
-                    ) {
-                        paint.shader = shader;
-                    } else {
-                        paint.set_color(self.palette.hair_cocoa.to_skia());
-                    }
                     self.pixmap
-                        .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
-
-                    // Anime-style glossy hair highlight halo arcs across the bob!
-                    let shine = Self::solid_paint(self.palette.hair_cocoa_hi.with_alpha(0.75));
-                    for &(sx, sy, rx, ry) in &[(-11.0, 3.0, 7.5, 2.0), (11.5, 3.0, 8.0, 2.0)] {
-                        if let Some(arc) = ellipse_path(sx, sy, rx, ry) {
-                            self.pixmap
-                                .fill_path(&arc, &shine, FillRule::Winding, cap_tx, None);
-                        }
+                        .fill_path(&hair, &fill, FillRule::Winding, cap_tx, None);
+                    // Electric cyan highlight streak right on the dramatic eye-covering lock!
+                    let mut streak = PathBuilder::new();
+                    streak.move_to(-4.0, 6.0);
+                    streak.line_to(-10.2, 25.2);
+                    streak.line_to(-13.8, 12.0);
+                    streak.close();
+                    if let Some(sp) = streak.finish() {
+                        self.pixmap
+                            .fill_path(&sp, &cyan, FillRule::Winding, cap_tx, None);
                     }
-
                     self.pixmap.stroke_path(
                         &hair,
                         &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
+                        &self.stroke_outline(self.rig.outline_width * 0.82),
                         cap_tx,
                         None,
                     );
                 }
-                -6.0
+                -11.5
+            }
+            HairStyle::ShamateFlame => {
+                // Style 8: "银粉杀马特" — Icy silver-white wild asymmetric swept bangs with
+                // neon-magenta Shamate streak & spiky crown ridges!
+                let fill = Self::solid_paint(self.palette.hair_shamate_silver);
+                let pink = Self::solid_paint(self.palette.hair_shamate_pink);
+
+                let mut pb = PathBuilder::new();
+                pb.move_to(-35.0, 24.0);
+                pb.cubic_to(-37.0, 2.5, -24.5, -9.5, -2.0, -9.8);
+                // Rebellious sharp silver side-crown spike
+                pb.line_to(16.0, -15.5);
+                pb.line_to(18.0, -6.5);
+                pb.cubic_to(30.0, -2.5, 37.0, 8.0, 35.5, 25.0);
+                // Asymmetric razor-sharp silver bangs sweeping boldly across the right eye!
+                pb.line_to(25.5, 27.5);
+                pb.line_to(21.0, 17.5);
+                pb.line_to(13.5, 28.5);
+                pb.line_to(4.5, 13.5);
+                pb.line_to(-5.5, 19.5);
+                pb.line_to(-12.5, 12.0);
+                pb.line_to(-24.5, 21.0);
+                pb.close();
+
+                if let Some(hair) = pb.finish() {
+                    self.pixmap
+                        .fill_path(&hair, &fill, FillRule::Winding, cap_tx, None);
+                    // Vivid neon-magenta streak slashing diagonally across the silver bangs!
+                    let mut streak = PathBuilder::new();
+                    streak.move_to(5.0, 3.0);
+                    streak.line_to(13.2, 26.2);
+                    streak.line_to(17.5, 11.5);
+                    streak.close();
+                    streak.move_to(6.0, -6.0);
+                    streak.line_to(15.5, -14.2);
+                    streak.line_to(14.5, -5.0);
+                    streak.close();
+                    if let Some(sp) = streak.finish() {
+                        self.pixmap
+                            .fill_path(&sp, &pink, FillRule::Winding, cap_tx, None);
+                    }
+                    self.pixmap.stroke_path(
+                        &hair,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.82),
+                        cap_tx,
+                        None,
+                    );
+                }
+                -11.5
             }
         };
 
         // Step B: IP Anchor #1 — The Reference-Image-1 Little Flame ("小火苗") FLOATING cleanly above the hair!
-        // Deliberate floating air gap + gentle vertical bob + soft radial fade-to-zero glow + tiny ember dot.
         let hover_bob = -1.6 * pose.breath - 1.2 * pose.badge_glow;
         let float_y = hair_top_y - 5.2 + hover_bob;
         let flicker = 1.0 + 0.04 * pose.breath + 0.07 * pose.badge_glow;
@@ -1298,7 +1666,6 @@ impl PetRenderer {
             );
         }
 
-        // Tiny floating spark dot hovering beside the flame tip to emphasize airy levitation!
         if let Some(ember) = ellipse_path(12.2, -14.5 + hover_bob * 0.6, 1.8, 1.8) {
             let ep = Self::solid_paint(self.palette.flame_core.with_alpha(0.9));
             self.pixmap

@@ -223,7 +223,7 @@ fn all_custom_hairstyles_and_body_shapes_render_distinctly_and_clamp_scales() {
     assert!(size_of::<PetAppearance>() <= 32);
 
     let clamped = PetAppearance {
-        hair: HairStyle::FluffyCloud,
+        hair: HairStyle::ShamateSpike,
         body: BodyShape::PearChubby,
         body_width_scale: 9.0,
         body_height_scale: 0.1,
@@ -265,5 +265,5 @@ fn all_custom_hairstyles_and_body_shapes_render_distinctly_and_clamp_scales() {
             );
         }
     }
-    assert_eq!(seen_hashes.len(), 16);
+    assert_eq!(seen_hashes.len(), 32);
 }

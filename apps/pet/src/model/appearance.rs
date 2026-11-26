@@ -1,39 +1,55 @@
 //! User-customizable appearance parameters for MilkBird ("奶鸟").
 //!
-//! Preserves core IP anchors (crown little flame + hollow green eyes + frog mouth)
-//! while allowing users to freely customize hairstyle and body shape.
+//! Preserves core IP anchors (floating crown little flame + hollow green eyes + frog mouth)
+//! while allowing users to freely customize hairstyle (8 styles including Shamate!) and body shape.
 
 use serde::{Deserialize, Serialize};
 
-/// Customizable hairstyle presets. Every style mounts the signature crown little flame IP anchor.
+/// Customizable hairstyle presets. Every style floats the signature little flame IP anchor above it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HairStyle {
-    /// Default sweeping flame crest with stepped mini embers (inspired by fiery crest silhouette).
+    /// Default seamless twin-strand natural ahoge.
     #[default]
-    FlameSweep,
-    /// Soft fluffy cloud-curl bangs topped by a lively center flame.
-    FluffyCloud,
-    /// Playful symmetric twin cheek-tufts framing a central flickering flame.
-    TwinSparks,
-    /// Neat rounded fringe with a cute teardrop flame perched on top.
-    BangsTuft,
+    NaturalAhoge,
+    /// Energetic twin-tails with golden hair ties and airy bangs.
+    TwinTails,
+    /// Glossy slicked-back boss hair.
+    SlickBack,
+    /// Round fluffy mushroom / bowl bob cut.
+    MushroomBob,
+    /// Soft milk-tea caramel curly bangs with bouncy side curls.
+    CurlyBangs,
+    /// Cute symmetric chibi twin buns (odango).
+    TwinBuns,
+    /// Wild spiky Shamate sea-urchin hair with electric-cyan highlight bangs!
+    ShamateSpike,
+    /// Dramatic silver-white & neon-magenta asymmetric Shamate wolf-tail!
+    ShamateFlame,
 }
 
 impl HairStyle {
-    pub const ALL: [Self; 4] = [
-        Self::FlameSweep,
-        Self::FluffyCloud,
-        Self::TwinSparks,
-        Self::BangsTuft,
+    pub const ALL: [Self; 8] = [
+        Self::NaturalAhoge,
+        Self::TwinTails,
+        Self::SlickBack,
+        Self::MushroomBob,
+        Self::CurlyBangs,
+        Self::TwinBuns,
+        Self::ShamateSpike,
+        Self::ShamateFlame,
     ];
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::FlameSweep => "自然呆毛",
-            Self::FluffyCloud => "奶咖软卷",
-            Self::TwinSparks => "俏皮双丸子",
-            Self::BangsTuft => "元气齐刘海",
+            Self::NaturalAhoge => "自然呆毛",
+            Self::TwinTails => "元气双马尾",
+            Self::SlickBack => "霸总大背头",
+            Self::MushroomBob => "憨萌蘑菇头",
+            Self::CurlyBangs => "奶咖卷刘海",
+            Self::TwinBuns => "俏皮双丸子",
+            Self::ShamateSpike => "葬爱爆炸头",
+            Self::ShamateFlame => "银粉杀马特",
         }
     }
 }
@@ -71,7 +87,7 @@ impl BodyShape {
     }
 }
 
-/// User-customizable appearance configuration (compact `Copy` struct, `< 32 bytes`).
+/// User-customizable appearance configuration (compact `Copy` struct, `16 bytes`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PetAppearance {
@@ -88,7 +104,7 @@ pub struct PetAppearance {
 impl Default for PetAppearance {
     fn default() -> Self {
         Self {
-            hair: HairStyle::FlameSweep,
+            hair: HairStyle::NaturalAhoge,
             body: BodyShape::RoundBall,
             body_width_scale: 1.0,
             body_height_scale: 1.0,

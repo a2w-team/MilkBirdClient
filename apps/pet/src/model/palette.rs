@@ -53,6 +53,14 @@ pub struct Palette {
     pub hair_cocoa_hi: Rgba,
     pub hair_cream: Rgba,
     pub hair_cream_shade: Rgba,
+    pub hair_jet: Rgba,
+    pub hair_jet_hi: Rgba,
+    pub hair_chestnut: Rgba,
+    pub hair_chestnut_hi: Rgba,
+    pub hair_shamate_dark: Rgba,
+    pub hair_shamate_cyan: Rgba,
+    pub hair_shamate_silver: Rgba,
+    pub hair_shamate_pink: Rgba,
     pub hair_tie_gold: Rgba,
     pub flame_core: Rgba,
     pub flame_mid: Rgba,
@@ -94,11 +102,19 @@ impl Palette {
             outline: Rgba::rgb(96, 30, 38),            // #601E26 crisp warm berry-cocoa contour
             hair_base: Rgba::rgb(239, 64, 62),         // #EF403E seamless body-matched natural ahoge
             hair_highlight: Rgba::rgb(255, 118, 102),  // #FF7666 ahoge warm sheen
-            hair_cocoa: Rgba::rgb(68, 38, 42),         // #44262A rich warm espresso-cocoa chibi hair
-            hair_cocoa_hi: Rgba::rgb(112, 66, 70),     // #704246 silky hair highlight
-            hair_cream: Rgba::rgb(248, 224, 188),      // #F8E0BC cozy milk-tea caramel blonde curls
+            hair_cocoa: Rgba::rgb(68, 38, 42),          // #44262A rich warm espresso-cocoa chibi hair
+            hair_cocoa_hi: Rgba::rgb(112, 66, 70),      // #704246 silky hair highlight
+            hair_cream: Rgba::rgb(248, 224, 188),       // #F8E0BC cozy milk-tea caramel curls
             hair_cream_shade: Rgba::rgb(226, 186, 138), // #E2BA8A soft caramel curl shadow
-            hair_tie_gold: Rgba::rgb(252, 202, 70),    // #FCCA46 cute golden hair-tie accent
+            hair_jet: Rgba::rgb(30, 32, 42),            // #1E202A glossy jet-black slick-back
+            hair_jet_hi: Rgba::rgb(98, 108, 132),       // #626C84 sleek pomade highlight
+            hair_chestnut: Rgba::rgb(116, 62, 42),      // #743E2A warm chestnut mushroom bob
+            hair_chestnut_hi: Rgba::rgb(174, 106, 76),  // #AE6A4C mushroom halo shine
+            hair_shamate_dark: Rgba::rgb(42, 22, 64),   // #2A1640 dark emo-purple Shamate spikes
+            hair_shamate_cyan: Rgba::rgb(34, 211, 238), // #22D3EE electric cyan Shamate highlight
+            hair_shamate_silver: Rgba::rgb(232, 236, 246), // #E8ECF6 icy silver Shamate wolf-tail
+            hair_shamate_pink: Rgba::rgb(244, 63, 158), // #F43F9E neon magenta Shamate streak
+            hair_tie_gold: Rgba::rgb(252, 202, 70),     // #FCCA46 cute golden hair-tie accent
             flame_core: Rgba::rgb(255, 154, 24),       // #FF9A18 warm fiery orange tip (ref 1)
             flame_mid: Rgba::rgb(255, 96, 12),         // #FF600C vivid mid orange flame (ref 1)
             flame_outer: Rgba::rgb(238, 38, 10),       // #EE260A vibrant flame-red base (ref 1)

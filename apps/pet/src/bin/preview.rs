@@ -51,28 +51,49 @@ fn showcase_poses() -> Vec<(&'static str, PetPose)> {
 fn customization_variants() -> Vec<(&'static str, PetAppearance, PetPose)> {
     let idle = PetPose::default();
     vec![
-        // Row 1: 4 Hairstyles (all mounting the signature Little Flame IP anchor)
+        // Row 1: Hairstyles 1-4 (自然呆毛 / 元气双马尾 / 霸总大背头 / 憨萌蘑菇头)
         (
-            "hair_flame_sweep",
-            PetAppearance::default().with_hair(HairStyle::FlameSweep),
+            "hair_natural_ahoge",
+            PetAppearance::default().with_hair(HairStyle::NaturalAhoge),
             idle,
         ),
         (
-            "hair_fluffy_cloud",
-            PetAppearance::default().with_hair(HairStyle::FluffyCloud),
+            "hair_twin_tails",
+            PetAppearance::default().with_hair(HairStyle::TwinTails),
             idle,
         ),
         (
-            "hair_twin_sparks",
-            PetAppearance::default().with_hair(HairStyle::TwinSparks),
+            "hair_slick_back",
+            PetAppearance::default().with_hair(HairStyle::SlickBack),
             idle,
         ),
         (
-            "hair_bangs_tuft",
-            PetAppearance::default().with_hair(HairStyle::BangsTuft),
+            "hair_mushroom_bob",
+            PetAppearance::default().with_hair(HairStyle::MushroomBob),
             idle,
         ),
-        // Row 2: 4 Body Shapes (RoundBall, PearChubby, MochiFlat, TallBean)
+        // Row 2: Hairstyles 5-8 (奶咖卷刘海 / 俏皮双丸子 / 葬爱爆炸头 / 银粉杀马特)
+        (
+            "hair_curly_bangs",
+            PetAppearance::default().with_hair(HairStyle::CurlyBangs),
+            idle,
+        ),
+        (
+            "hair_twin_buns",
+            PetAppearance::default().with_hair(HairStyle::TwinBuns),
+            idle,
+        ),
+        (
+            "hair_shamate_spike",
+            PetAppearance::default().with_hair(HairStyle::ShamateSpike),
+            idle,
+        ),
+        (
+            "hair_shamate_flame",
+            PetAppearance::default().with_hair(HairStyle::ShamateFlame),
+            idle,
+        ),
+        // Row 3: 4 Body Shapes (圆团子 / 梨形大肚 / 大福麻薯 / 长条软豆)
         (
             "body_round_ball",
             PetAppearance::default().with_body(BodyShape::RoundBall),
