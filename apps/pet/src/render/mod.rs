@@ -905,7 +905,11 @@ impl PetRenderer {
         }
     }
 
-    /// IP Anchor #2b: Expressive wide frog mouth ("蛙嘴")!
+    /// IP Anchor #2b: Nailong-inspired expressive frog mouth ("奶龙同款嘴型")!
+    /// - `HappyOpen`: Wide joyful D-grin with TWO iconic tiny white fangs + rosy tongue (left ref).
+    /// - `Closed` + `Focused`: Grumpy pouty downward arc `︵` (middle ref).
+    /// - `Closed` (idle/chill): Clean minimalist curved smile arc `︶`.
+    /// - `Chirp`: Cute small upright dark `"o"` mouth (right ref).
     fn draw_frog_mouth(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
         let mx = 6.5;
         let my = m.mouth_y;
@@ -913,65 +917,75 @@ impl PetRenderer {
 
         match pose.beak {
             BeakPose::Closed => {
-                // Iconic wide deadpan-chill frog mouth with gentle upward frog-lip dip & tucked corners!
                 let mut pb = PathBuilder::new();
-                pb.move_to(mx - 9.2, my - 0.6);
-                pb.cubic_to(mx - 4.2, my + 3.4, mx - 1.2, my + 0.2, mx, my + 0.8);
-                pb.cubic_to(mx + 1.2, my + 0.2, mx + 4.2, my + 3.4, mx + 9.2, my - 0.6);
+                if pose.eyes == EyeExpression::Focused {
+                    // Middle Nailong reference: cute grumpy downward pouty arc `︵`!
+                    pb.move_to(mx - 6.8, my + 2.2);
+                    pb.quad_to(mx, my - 2.6, mx + 6.8, my + 2.2);
+                } else {
+                    // Clean, minimalist single-curve relaxed frog/Nailong smile arc (no bumpy cat-w).
+                    pb.move_to(mx - 7.8, my - 0.6);
+                    pb.quad_to(mx, my + 3.2, mx + 7.8, my - 0.6);
+                }
                 if let Some(path) = pb.finish() {
                     self.pixmap
-                        .stroke_path(&path, &line, &self.stroke_outline(2.35), body_tx, None);
-                }
-                // Cute tiny corner dimple ticks typical of a frog grin.
-                let mut corners = PathBuilder::new();
-                corners.move_to(mx - 10.2, my - 1.4);
-                corners.line_to(mx - 8.6, my - 0.2);
-                corners.move_to(mx + 10.2, my - 1.4);
-                corners.line_to(mx + 8.6, my - 0.2);
-                if let Some(cp) = corners.finish() {
-                    self.pixmap
-                        .stroke_path(&cp, &line, &self.stroke_outline(1.75), body_tx, None);
+                        .stroke_path(&path, &line, &self.stroke_outline(2.1), body_tx, None);
                 }
             }
             BeakPose::Chirp => {
-                // Adorable startled/curious little dark oval "o" mouth (just like Nailong right pose!).
-                if let Some(o_mouth) = ellipse_path(mx, my + 1.2, 3.6, 4.6) {
-                    let cavity = Self::solid_paint(self.palette.mouth_cavity);
+                // Right Nailong reference: cute small upright dark oval "o" mouth!
+                if let Some(o_mouth) = ellipse_path(mx, my + 1.4, 3.1, 4.4) {
+                    let cavity = Self::solid_paint(self.palette.eye_pupil);
                     self.pixmap
                         .fill_path(&o_mouth, &cavity, FillRule::Winding, body_tx, None);
                     self.pixmap.stroke_path(
                         &o_mouth,
                         &line,
-                        &self.stroke_outline(1.9),
+                        &self.stroke_outline(1.1),
                         body_tx,
                         None,
                     );
                 }
             }
             BeakPose::HappyOpen => {
-                // Big joyful wide frog grin open mouth with rosy tongue inside!
+                // Left Nailong reference: big joyful wide open D-grin + TWO TINY WHITE FANGS + rosy tongue!
                 let mut pb = PathBuilder::new();
-                pb.move_to(mx - 9.6, my - 1.6);
-                pb.quad_to(mx, my - 0.4, mx + 9.6, my - 1.6);
-                pb.cubic_to(mx + 9.2, my + 7.2, mx + 4.5, my + 9.5, mx, my + 9.5);
-                pb.cubic_to(mx - 4.5, my + 9.5, mx - 9.2, my + 7.2, mx - 9.6, my - 1.6);
+                pb.move_to(mx - 10.6, my - 2.4);
+                pb.quad_to(mx, my - 1.2, mx + 10.6, my - 2.4);
+                pb.cubic_to(mx + 10.4, my + 7.6, mx + 5.2, my + 10.6, mx, my + 10.6);
+                pb.cubic_to(mx - 5.2, my + 10.6, mx - 10.4, my + 7.6, mx - 10.6, my - 2.4);
                 pb.close();
                 if let Some(mouth) = pb.finish() {
                     let cavity = Self::solid_paint(self.palette.mouth_cavity);
                     self.pixmap
                         .fill_path(&mouth, &cavity, FillRule::Winding, body_tx, None);
 
-                    // Rosy frog tongue nestled inside lower grin.
-                    if let Some(tongue) = ellipse_path(mx, my + 5.8, 5.4, 2.8) {
+                    // Rosy lower tongue curve inside the grin.
+                    if let Some(tongue) = ellipse_path(mx, my + 6.6, 6.2, 3.2) {
                         let tp = Self::solid_paint(self.palette.mouth_tongue);
                         self.pixmap
                             .fill_path(&tongue, &tp, FillRule::Winding, body_tx, None);
                     }
 
+                    // Two iconic Nailong tiny white upper fangs on the left & right corners!
+                    let fang_paint = Self::solid_paint(self.palette.eye_sparkle);
+                    for &side in &[-1.0f32, 1.0f32] {
+                        let fx = mx + side * 6.8;
+                        let mut fang = PathBuilder::new();
+                        fang.move_to(fx - side * 1.9, my - 1.9);
+                        fang.line_to(fx + side * 1.6, my - 2.1);
+                        fang.line_to(fx + side * 0.1, my + 1.4);
+                        fang.close();
+                        if let Some(fp) = fang.finish() {
+                            self.pixmap
+                                .fill_path(&fp, &fang_paint, FillRule::Winding, body_tx, None);
+                        }
+                    }
+
                     self.pixmap.stroke_path(
                         &mouth,
                         &line,
-                        &self.stroke_outline(2.05),
+                        &self.stroke_outline(1.9),
                         body_tx,
                         None,
                     );
