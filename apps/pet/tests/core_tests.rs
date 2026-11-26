@@ -1,4 +1,6 @@
-use milkbird_pet::model::{EyeExpression, LAYER_ORDER, PetPose, PetRig};
+use milkbird_pet::model::{
+    BodyShape, EyeExpression, HairStyle, LAYER_ORDER, PetAppearance, PetPose, PetRig,
+};
 use milkbird_pet::physics::{PetPhysics, PhysicsTargets, Spring1D};
 use milkbird_pet::render::PetRenderer;
 use milkbird_pet::scheduler::{FpsTier, FrameDecision, FrameScheduler};
@@ -214,4 +216,54 @@ fn hit_test_is_sub_50us() {
     }
     let avg_us = start.elapsed().as_secs_f64() * 1e6 / 10_000.0;
     assert!(avg_us < 50.0, "hit_test avg too slow: {avg_us:.3} us");
+}
+
+#[test]
+fn all_custom_hairstyles_and_body_shapes_render_distinctly_and_clamp_scales() {
+    assert!(size_of::<PetAppearance>() <= 32);
+
+    let clamped = PetAppearance {
+        hair: HairStyle::FluffyCloud,
+        body: BodyShape::PearChubby,
+        body_width_scale: 9.0,
+        body_height_scale: 0.1,
+        flame_scale: 5.0,
+    }
+    .sanitized();
+    assert_eq!(clamped.body_width_scale, 1.20);
+    assert_eq!(clamped.body_height_scale, 0.85);
+    assert_eq!(clamped.flame_scale, 1.35);
+
+    let mut renderer = PetRenderer::new(2.0);
+    let pose = PetPose::default();
+    let mut seen_hashes = std::collections::HashSet::new();
+
+    for hair in HairStyle::ALL {
+        for body in BodyShape::ALL {
+            renderer.set_appearance(PetAppearance::default().with_hair(hair).with_body(body));
+            let frame = renderer.render(&pose);
+            let opaque = frame
+                .data()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|px| px[3] > 200)
+                .count();
+            assert!(
+                opaque > 5_000,
+                "variant ({hair:?}, {body:?}) rendered too few pixels: {opaque}"
+            );
+            // Simple FNV hash over pixmap proves every (hair, body) combination produces distinct output.
+            let mut h: u64 = 0xcbf29ce484222325;
+            for &b in frame.data().iter().step_by(37) {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            assert!(
+                seen_hashes.insert(h),
+                "duplicate render detected for ({hair:?}, {body:?})"
+            );
+        }
+    }
+    assert_eq!(seen_hashes.len(), 16);
 }
