@@ -49,6 +49,11 @@ pub struct Palette {
     pub outline: Rgba,
     pub hair_base: Rgba,
     pub hair_highlight: Rgba,
+    pub hair_cocoa: Rgba,
+    pub hair_cocoa_hi: Rgba,
+    pub hair_cream: Rgba,
+    pub hair_cream_shade: Rgba,
+    pub hair_tie_gold: Rgba,
     pub flame_core: Rgba,
     pub flame_mid: Rgba,
     pub flame_outer: Rgba,
@@ -87,8 +92,13 @@ impl Palette {
             belly_base: Rgba::rgb(255, 249, 238),      // #FFF9EE warm creamy milk
             belly_shade: Rgba::rgb(242, 230, 214),     // #F2E6D6 soft oat-milk shadow
             outline: Rgba::rgb(96, 30, 38),            // #601E26 crisp warm berry-cocoa contour
-            hair_base: Rgba::rgb(244, 72, 58),         // #F4483A soft coral hair tuft
-            hair_highlight: Rgba::rgb(255, 136, 114),  // #FF8872 hair highlight
+            hair_base: Rgba::rgb(239, 64, 62),         // #EF403E seamless body-matched natural ahoge
+            hair_highlight: Rgba::rgb(255, 118, 102),  // #FF7666 ahoge warm sheen
+            hair_cocoa: Rgba::rgb(68, 38, 42),         // #44262A rich warm espresso-cocoa chibi hair
+            hair_cocoa_hi: Rgba::rgb(112, 66, 70),     // #704246 silky hair highlight
+            hair_cream: Rgba::rgb(248, 224, 188),      // #F8E0BC cozy milk-tea caramel blonde curls
+            hair_cream_shade: Rgba::rgb(226, 186, 138), // #E2BA8A soft caramel curl shadow
+            hair_tie_gold: Rgba::rgb(252, 202, 70),    // #FCCA46 cute golden hair-tie accent
             flame_core: Rgba::rgb(255, 154, 24),       // #FF9A18 warm fiery orange tip (ref 1)
             flame_mid: Rgba::rgb(255, 96, 12),         // #FF600C vivid mid orange flame (ref 1)
             flame_outer: Rgba::rgb(238, 38, 10),       // #EE260A vibrant flame-red base (ref 1)

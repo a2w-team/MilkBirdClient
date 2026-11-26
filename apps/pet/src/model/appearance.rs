@@ -30,10 +30,10 @@ impl HairStyle {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::FlameSweep => "火羽翘毛",
-            Self::FluffyCloud => "云朵卷毛",
-            Self::TwinSparks => "双翘呆毛",
-            Self::BangsTuft => "齐刘海火苗",
+            Self::FlameSweep => "自然呆毛",
+            Self::FluffyCloud => "奶咖软卷",
+            Self::TwinSparks => "俏皮双丸子",
+            Self::BangsTuft => "元气齐刘海",
         }
     }
 }
