@@ -972,8 +972,9 @@ impl PetRenderer {
         }
     }
 
-    /// IP Anchor #1 + Custom Hairstyle: Renders the chosen hairstyle AND always mounts the
-    /// living flickering orange-gold little flame ("小火苗") on the crown!
+    /// IP Anchor #1 + Custom Hairstyle: Renders the chosen customizable hairstyle on the crown,
+    /// with the signature reference-image-1 Little Flame ("小火苗") floating cleanly in mid-air
+    /// above the hairstyle with a soft warm glow halo and gentle hover bob!
     fn draw_hair_and_little_flame(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
         let sway_deg = pose.ahoge_angle.to_degrees() + pose.scarf_sway.to_degrees() * 0.35;
         let crown_tx = body_tx.pre_translate(1.0, m.crown_y + 1.0);
@@ -981,19 +982,41 @@ impl PetRenderer {
         let hair_fill = Self::solid_paint(self.palette.hair_base);
         let hair_hi = Self::solid_paint(self.palette.hair_highlight);
 
-        // Step A: Draw customizable hairstyle base (4 distinct presets).
-        // `FlameSweep` uses the exact reference-image-1 flame directly without extra overlapping hair spikes.
-        match self.appearance.hair {
-            HairStyle::FlameSweep => {}
-            HairStyle::FluffyCloud => {
-                // Soft fluffy 3-puff cloud curl resting on top of the forehead!
+        // Step A: Draw the user's chosen customizable hairstyle directly on the head (4 distinct styles).
+        // Each returns the local clearance height `hair_top_y` so the floating flame hovers cleanly above it.
+        let hair_top_y: f32 = match self.appearance.hair {
+            HairStyle::FlameSweep => {
+                // Neat feathered crown tuft sweeping gently sideways (classic cute MilkBird hairstyle).
                 let tx = crown_tx.pre_rotate(sway_deg * 0.45);
                 let mut pb = PathBuilder::new();
-                pb.move_to(-14.5, 3.2);
-                pb.cubic_to(-17.5, -4.5, -10.0, -10.5, -4.0, -6.5);
-                pb.cubic_to(-2.5, -13.0, 8.5, -13.0, 9.8, -6.0);
-                pb.cubic_to(15.5, -8.5, 20.5, -1.5, 15.8, 4.0);
-                pb.quad_to(1.0, 7.2, -14.5, 3.2);
+                pb.move_to(-12.5, 4.0);
+                pb.cubic_to(-14.5, -2.5, -7.5, -8.2, -0.5, -7.2);
+                pb.cubic_to(2.8, -10.2, 9.8, -9.2, 11.2, -3.6);
+                pb.cubic_to(16.2, -5.2, 18.8, 0.2, 14.2, 4.4);
+                pb.quad_to(1.2, 7.2, -12.5, 4.0);
+                pb.close();
+                if let Some(p) = pb.finish() {
+                    self.pixmap
+                        .fill_path(&p, &hair_fill, FillRule::Winding, tx, None);
+                    self.pixmap.stroke_path(
+                        &p,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.85),
+                        tx,
+                        None,
+                    );
+                }
+                -8.5
+            }
+            HairStyle::FluffyCloud => {
+                // Soft fluffy 3-puff cloud-curl hair resting cozily on top of the head.
+                let tx = crown_tx.pre_rotate(sway_deg * 0.4);
+                let mut pb = PathBuilder::new();
+                pb.move_to(-15.5, 3.8);
+                pb.cubic_to(-18.5, -4.2, -10.5, -10.5, -4.2, -6.4);
+                pb.cubic_to(-2.2, -13.2, 8.8, -13.2, 10.2, -6.0);
+                pb.cubic_to(16.0, -8.5, 21.0, -1.2, 16.2, 4.2);
+                pb.quad_to(0.8, 7.5, -15.5, 3.8);
                 pb.close();
                 if let Some(p) = pb.finish() {
                     self.pixmap
@@ -1006,15 +1029,16 @@ impl PetRenderer {
                         None,
                     );
                 }
+                -11.8
             }
             HairStyle::TwinSparks => {
-                // Cheeky symmetric twin hair tufts flaring left and right around the flame!
-                let tx = crown_tx.pre_rotate(sway_deg * 0.55);
+                // Cheeky symmetric twin hair puffs flaring left and right!
+                let tx = crown_tx.pre_rotate(sway_deg * 0.5);
                 for &side in &[-1.0f32, 1.0f32] {
                     let mut pb = PathBuilder::new();
-                    pb.move_to(side * 4.0, 3.2);
-                    pb.cubic_to(side * 10.5, -4.0, side * 19.5, -10.5, side * 22.5, -4.2);
-                    pb.cubic_to(side * 16.5, -3.5, side * 14.5, 1.8, side * 11.5, 4.5);
+                    pb.move_to(side * 3.5, 3.6);
+                    pb.cubic_to(side * 10.5, -4.0, side * 20.0, -11.0, side * 23.2, -4.2);
+                    pb.cubic_to(side * 17.0, -3.2, side * 14.8, 2.0, side * 11.5, 4.8);
                     pb.close();
                     if let Some(p) = pb.finish() {
                         self.pixmap
@@ -1028,17 +1052,35 @@ impl PetRenderer {
                         );
                     }
                 }
+                // Cute small center hair wave connecting the twin puffs.
+                let mut mid = PathBuilder::new();
+                mid.move_to(-8.0, 3.8);
+                mid.quad_to(0.0, -4.2, 8.0, 3.8);
+                mid.quad_to(0.0, 6.0, -8.0, 3.8);
+                mid.close();
+                if let Some(p) = mid.finish() {
+                    self.pixmap
+                        .fill_path(&p, &hair_fill, FillRule::Winding, tx, None);
+                    self.pixmap.stroke_path(
+                        &p,
+                        &outline,
+                        &self.stroke_outline(self.rig.outline_width * 0.8),
+                        tx,
+                        None,
+                    );
+                }
+                -7.2
             }
             HairStyle::BangsTuft => {
-                // Cute rounded bangs curving gently over the forehead!
-                let tx = crown_tx.pre_rotate(sway_deg * 0.3);
+                // Cute neat rounded bangs curving gently across the forehead above the green eyes!
+                let tx = crown_tx.pre_rotate(sway_deg * 0.25);
                 let mut pb = PathBuilder::new();
-                pb.move_to(-16.5, 5.5);
-                pb.quad_to(-12.0, -5.0, 1.5, -5.5);
-                pb.quad_to(15.0, -5.0, 18.5, 5.5);
-                pb.quad_to(12.5, 9.2, 8.2, 4.8);
-                pb.quad_to(2.0, 10.2, -3.5, 5.0);
-                pb.quad_to(-10.2, 9.5, -16.5, 5.5);
+                pb.move_to(-17.5, 6.2);
+                pb.quad_to(-12.5, -5.2, 1.5, -5.8);
+                pb.quad_to(15.5, -5.2, 19.2, 6.2);
+                pb.quad_to(13.0, 9.8, 8.2, 5.0);
+                pb.quad_to(2.0, 10.6, -3.5, 5.2);
+                pb.quad_to(-10.5, 9.8, -17.5, 6.2);
                 pb.close();
                 if let Some(p) = pb.finish() {
                     self.pixmap
@@ -1051,42 +1093,57 @@ impl PetRenderer {
                         None,
                     );
                 }
+                -6.2
+            }
+        };
+
+        // Step B: IP Anchor #1 — The Reference-Image-1 Little Flame ("小火苗") FLOATING cleanly above the hair!
+        // Deliberate floating air gap + gentle vertical bob + soft radial fade-to-zero glow + tiny ember dot.
+        let hover_bob = -1.6 * pose.breath - 1.2 * pose.badge_glow;
+        let float_y = hair_top_y - 5.2 + hover_bob;
+        let flicker = 1.0 + 0.04 * pose.breath + 0.07 * pose.badge_glow;
+        let fscale = self.appearance.flame_scale * 0.78 * flicker;
+        let flame_tx = crown_tx
+            .pre_translate(0.5, float_y)
+            .pre_rotate(sway_deg * 1.15)
+            .pre_scale(fscale, fscale);
+
+        // True radial glow fading smoothly to 0% alpha (zero hard bubble edge on light or dark desktops).
+        if let Some(halo) = ellipse_path(1.0, -7.5, 18.0, 16.0) {
+            let mut glow = Paint {
+                anti_alias: true,
+                ..Paint::default()
+            };
+            if let Some(shader) = RadialGradient::new(
+                Point::from_xy(1.0, -7.5),
+                Point::from_xy(1.0, -7.5),
+                17.0,
+                vec![
+                    GradientStop::new(0.0, self.palette.flame_core.with_alpha(0.30).to_skia()),
+                    GradientStop::new(0.55, self.palette.flame_mid.with_alpha(0.10).to_skia()),
+                    GradientStop::new(1.0, self.palette.flame_mid.with_alpha(0.0).to_skia()),
+                ],
+                SpreadMode::Pad,
+                Transform::identity(),
+            ) {
+                glow.shader = shader;
+                self.pixmap
+                    .fill_path(&halo, &glow, FillRule::Winding, flame_tx, None);
             }
         }
 
-        // Step B: IP Anchor #1 — Exact Reference Image 1 Little Flame ("小火苗") silhouette!
-        // Sleek S-curved tall flame blade sweeping up-left + 3 sharp angular mini-spikes on the right.
-        let (fx, fy, f_mult) = match self.appearance.hair {
-            HairStyle::FlameSweep => (0.5, 1.2, 1.05),
-            HairStyle::FluffyCloud => (1.5, -7.2, 0.86),
-            HairStyle::TwinSparks => (0.5, 0.8, 0.90),
-            HairStyle::BangsTuft => (1.0, -4.2, 0.88),
-        };
-        let flicker = 1.0 + 0.04 * pose.breath + 0.07 * pose.badge_glow;
-        let fscale = self.appearance.flame_scale * f_mult * flicker;
-        let flame_tx = crown_tx
-            .pre_translate(fx, fy)
-            .pre_rotate(sway_deg)
-            .pre_scale(fscale, fscale);
-
-        // Faithful trace of reference image 1's fiery S-curve crest + 3 stepped sharp spikes!
+        // Exact reference image 1 silhouette: sleek S-curved left flame blade + 3 sharp stepped spikes!
         let mut flame = PathBuilder::new();
-        flame.move_to(-6.2, 2.8);
-        // Left edge of tall S-curved flame blade: bows gently right then sweeps gracefully up-left to a sharp tip
-        flame.cubic_to(-8.6, -3.5, -3.2, -10.8, -11.4, -24.8);
-        // Right edge of tall S-curved flame blade: sleek taper sweeping back down into the first valley
-        flame.cubic_to(-3.8, -19.2, -0.2, -11.5, -1.6, -4.6);
-        // Sharp mini-spike #1
-        flame.line_to(1.8, -10.6);
+        flame.move_to(-6.2, 2.4);
+        flame.cubic_to(-8.6, -3.5, -3.2, -10.8, -11.4, -24.5);
+        flame.cubic_to(-3.8, -19.0, -0.2, -11.4, -1.6, -4.6);
+        flame.line_to(1.8, -10.5);
         flame.line_to(2.8, -4.8);
-        // Sharp mini-spike #2 (slightly wider & angled right)
-        flame.line_to(7.8, -10.4);
+        flame.line_to(7.8, -10.3);
         flame.line_to(7.2, -4.0);
-        // Sharp mini-spike #3 (leaning outward-right)
         flame.line_to(13.8, -8.8);
-        flame.cubic_to(13.2, -3.0, 11.4, 0.8, 8.6, 2.8);
-        // Rounded base tucking cleanly onto the head/hair
-        flame.quad_to(1.2, 5.2, -6.2, 2.8);
+        flame.cubic_to(13.2, -3.0, 11.4, 0.8, 8.6, 2.4);
+        flame.quad_to(1.2, 5.0, -6.2, 2.4);
         flame.close();
 
         if let Some(flame_path) = flame.finish() {
@@ -1112,15 +1169,21 @@ impl PetRenderer {
             self.pixmap
                 .fill_path(&flame_path, &paint, FillRule::Winding, flame_tx, None);
 
-            // Delicate warm crimson contour so the sleek orange flame silhouette pops cleanly on white & dark desktops.
             let flame_rim = Self::solid_paint(self.palette.outline.with_alpha(0.72));
             self.pixmap.stroke_path(
                 &flame_path,
                 &flame_rim,
-                &self.stroke_outline(1.35),
+                &self.stroke_outline(1.4),
                 flame_tx,
                 None,
             );
+        }
+
+        // Tiny floating spark dot hovering beside the flame tip to emphasize airy levitation!
+        if let Some(ember) = ellipse_path(12.2, -14.5 + hover_bob * 0.6, 1.8, 1.8) {
+            let ep = Self::solid_paint(self.palette.flame_core.with_alpha(0.9));
+            self.pixmap
+                .fill_path(&ember, &ep, FillRule::Winding, flame_tx, None);
         }
     }
 
