@@ -17,8 +17,10 @@ milkbird-pet {ver} — 奶鸟俱乐部原生轻量桌宠（零 WebView）
   --mode <free|stay|edge>          启动行为模式（自由散步 / 原地乖坐 / 贴边挂机）
   --state <idle|walk|petted|alert|sleep|perch|suspended>
                                    以指定状态启动（便于演示或性能实测）
-  --demo [状态]                    演示模式，自动弹出中文问候/通知气泡
+  --demo [状态|tour]               演示模式（可选 `tour` 自动轮播全部 8 种状态与表情）
   --bubble <文本>                  启动时展示自定义轻量中文气泡
+  --socket <路径>                  指定 `tray.sock` Unix Socket 路径（默认 ~/.milkbird/tray.sock）
+  --offline                        纯离线伴侣模式（关闭 `tray.sock` 轮询）
   --duration <秒>                  运行指定秒数后自动退出（用于自动化压测/基准测试）
   --no-fullscreen-check            关闭全屏应用自动挂起检测
   --config <路径>                  指定配置文件路径（默认 ~/.milkbird/pet-config.json）
@@ -80,21 +82,35 @@ fn parse_args() -> Result<Option<LaunchOptions>, String> {
                 opts.initial_state = Some(parse_state(&val)?);
             }
             "--demo" => {
-                let next_is_state = args.peek().is_some_and(|s| !s.starts_with('-'));
-                if next_is_state {
+                opts.offline = true;
+                let next_is_arg = args.peek().is_some_and(|s| !s.starts_with('-'));
+                if next_is_arg {
                     let val = args.next().unwrap();
-                    opts.initial_state = Some(parse_state(&val)?);
+                    if val.eq_ignore_ascii_case("tour") {
+                        opts.demo_tour = true;
+                    } else {
+                        opts.initial_state = Some(parse_state(&val)?);
+                    }
                 } else {
                     opts.initial_state = Some(PetState::AlertMatch);
                 }
                 opts.demo_bubble
-                    .get_or_insert_with(|| "叮咚！演示模式：点击我摸头，右键切换行为模式～".to_string());
+                    .get_or_insert_with(|| "叮咚！演示模式：点击我摸头，右键切换行为或轮播 8 种状态～".to_string());
             }
             "--bubble" => {
                 let val = args
                     .next()
                     .ok_or_else(|| "--bubble 需要气泡文本".to_string())?;
                 opts.demo_bubble = Some(val);
+            }
+            "--socket" => {
+                let val = args
+                    .next()
+                    .ok_or_else(|| "--socket 需要 Unix Socket 路径".to_string())?;
+                opts.socket_path = Some(PathBuf::from(val));
+            }
+            "--offline" => {
+                opts.offline = true;
             }
             "--duration" => {
                 let val = args

@@ -1,6 +1,8 @@
 //! Cross-platform windowing abstraction, multi-monitor geometry, persistent config,
 //! and native macOS desktop pet shell.
 
+use crate::bridge::{PollPace, TrayBridge, TrayConnection};
+use crate::bridge::socket::default_socket_path;
 use crate::bubble::{BubbleAction, BubbleLayout, BubbleState, ScreenRect};
 use crate::model::LOGICAL_CANVAS_SIZE;
 use crate::render::PetRenderer;
@@ -27,6 +29,7 @@ pub enum MenuCommand {
     DemoFeed,
     DemoPat,
     DemoAlert,
+    DemoTour,
     ToggleSleep,
     ToggleStealth,
     ResetPosition,
@@ -39,9 +42,12 @@ pub struct LaunchOptions {
     pub initial_mode: Option<BehaviorMode>,
     pub initial_state: Option<PetState>,
     pub demo_bubble: Option<String>,
+    pub demo_tour: bool,
     pub duration_secs: Option<f64>,
     pub auto_suspend_fullscreen: Option<bool>,
     pub config_path: Option<PathBuf>,
+    pub socket_path: Option<PathBuf>,
+    pub offline: bool,
 }
 
 /// Persisted desktop pet preferences stored in `${MILKBIRD_TRAY_DIR:-$HOME/.milkbird}/pet-config.json`.
@@ -210,10 +216,22 @@ pub struct StepOutput {
     pub next_interval: Option<Duration>,
     pub is_suspended: bool,
     pub is_stealth: bool,
+    pub tray_status_changed: bool,
 }
 
+const DEMO_TOUR_SEQUENCE: [(PetState, &str); 8] = [
+    (PetState::Idle, "【演示 1/8】待机呼吸 · 自然眨眼"),
+    (PetState::WalkHop, "【演示 2/8】自由散步 · 蹦跳巡游"),
+    (PetState::DragDangle, "【演示 3/8】拎起拖拽 · 物理惯性摆动"),
+    (PetState::Petted, "【演示 4/8】摸头互动 · 弯弯眼与爱心"),
+    (PetState::AlertMatch, "【演示 5/8】新匹配提醒 · 扑腾翅膀与角标"),
+    (PetState::Sleep, "【演示 6/8】打盹休眠 · 缩成团子低耗睡眠"),
+    (PetState::Perch, "【演示 7/8】贴边挂机 · 侧身探头待命"),
+    (PetState::Idle, "【演示 8/8】专注守候 · 帮你盯着活跃需求！"),
+];
+
 /// Platform-agnostic live session combining `PetController`, `PetRenderer`, `FrameScheduler`,
-/// `BubbleState`, multi-monitor placement, and power-saving suspend reasons.
+/// `BubbleState`, `TrayBridge`, multi-monitor placement, and power-saving suspend reasons.
 pub struct PetSession {
     controller: PetController,
     renderer: PetRenderer,
@@ -221,12 +239,18 @@ pub struct PetSession {
     bubble: BubbleState,
     config: PetConfig,
     config_path: PathBuf,
+    socket_path: PathBuf,
+    bridge: Option<TrayBridge>,
+    tray_connection: TrayConnection,
+    preferred_action: Option<BubbleAction>,
     origin: (f64, f64),
     dragging: bool,
     stealth_hidden: bool,
     screen_locked: bool,
     system_sleeping: bool,
     fullscreen_active: bool,
+    demo_tour_step: Option<usize>,
+    demo_tour_timer: f32,
     last_tick: Instant,
     combo_announced: u64,
 }
@@ -241,6 +265,10 @@ impl PetSession {
             .config_path
             .clone()
             .unwrap_or_else(PetConfig::default_path);
+        let socket_path = options
+            .socket_path
+            .clone()
+            .unwrap_or_else(default_socket_path);
         let mut config = PetConfig::load(&config_path);
         if let Some(mode) = options.initial_mode {
             config.behavior_mode = mode;
@@ -268,32 +296,94 @@ impl PetSession {
         }
 
         let mut bubble = BubbleState::new();
-        if let Some(ref text) = options.demo_bubble {
-            bubble.show(text.clone(), 5.0, BubbleAction::Dismiss);
-        } else if options.initial_state.is_none() && !config.sleeping {
-            bubble.show("咕咕~ 小奶鸟已就位，右键可以切换模式哦！", 3.6, BubbleAction::Dismiss);
-        }
+        let demo_tour_step = if options.demo_tour {
+            let (first_state, first_caption) = DEMO_TOUR_SEQUENCE[0];
+            controller.handle_event(PetEvent::DemoState(first_state));
+            bubble.show(first_caption, 2.4, BubbleAction::Dismiss);
+            Some(0)
+        } else {
+            if let Some(ref text) = options.demo_bubble {
+                bubble.show(text.clone(), 5.0, BubbleAction::Dismiss);
+            } else if options.initial_state.is_none() && !config.sleeping {
+                bubble.show(
+                    "咕咕~ 小奶鸟已就位，右键可以切换模式哦！",
+                    3.6,
+                    BubbleAction::Dismiss,
+                );
+            }
+            None
+        };
+
+        let bridge = if options.offline {
+            None
+        } else {
+            Some(TrayBridge::start(Some(socket_path.clone())))
+        };
 
         let mut renderer = PetRenderer::new(scale_factor);
         let (initial_pose, _) = controller.tick(0.0);
         renderer.render(&initial_pose);
 
-        Self {
+        let session = Self {
             controller,
             renderer,
             scheduler: FrameScheduler::new(),
             bubble,
             config,
             config_path,
+            socket_path,
+            bridge,
+            tray_connection: TrayConnection::Offline,
+            preferred_action: None,
             origin: (snapped.x, snapped.y),
             dragging: false,
             stealth_hidden: false,
             screen_locked: false,
             system_sleeping: false,
             fullscreen_active: false,
+            demo_tour_step,
+            demo_tour_timer: 0.0,
             last_tick: Instant::now(),
             combo_announced: 0,
+        };
+        session.sync_bridge_pace();
+        session
+    }
+
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    pub fn tray_connection(&self) -> &TrayConnection {
+        &self.tray_connection
+    }
+
+    pub fn tray_status_label(&self) -> String {
+        self.tray_connection.menu_summary()
+    }
+
+    pub fn preferred_action(&self) -> Option<BubbleAction> {
+        self.preferred_action.clone()
+    }
+
+    pub fn request_tray_refresh(&self) {
+        if let Some(ref bridge) = self.bridge {
+            bridge.request_refresh();
         }
+    }
+
+    fn sync_bridge_pace(&self) {
+        let Some(ref bridge) = self.bridge else {
+            return;
+        };
+        let pace = if self.is_suspended() {
+            PollPace::Paused
+        } else if matches!(self.controller.state(), PetState::Sleep | PetState::Idle | PetState::Perch) {
+            PollPace::Relaxed
+        } else {
+            PollPace::Active
+        };
+        bridge.set_pace(pace);
     }
 
     pub fn origin(&self) -> (f64, f64) {
@@ -349,6 +439,7 @@ impl PetSession {
             self.scheduler.invalidate();
             self.last_tick = Instant::now();
         }
+        self.sync_bridge_pace();
     }
 
     pub fn set_screen_locked(&mut self, locked: bool) {
@@ -530,6 +621,7 @@ impl PetSession {
             MenuCommand::DemoAlert => {
                 self.stealth_hidden = false;
                 self.config.sleeping = false;
+                self.demo_tour_step = None;
                 self.sync_suspend_state();
                 self.controller.handle_event(PetEvent::TrayStatus {
                     unread_count: 1,
@@ -541,6 +633,17 @@ impl PetSession {
                     4.8,
                     BubbleAction::OpenTray,
                 );
+                false
+            }
+            MenuCommand::DemoTour => {
+                self.stealth_hidden = false;
+                self.config.sleeping = false;
+                self.sync_suspend_state();
+                self.demo_tour_step = Some(0);
+                self.demo_tour_timer = 0.0;
+                let (state, caption) = DEMO_TOUR_SEQUENCE[0];
+                self.controller.handle_event(PetEvent::DemoState(state));
+                self.bubble.show(caption, 2.4, BubbleAction::Dismiss);
                 false
             }
             MenuCommand::ToggleSleep => {
@@ -607,8 +710,79 @@ impl PetSession {
     /// Deterministic step entrypoint used by both the live run loop and headless unit tests.
     pub fn step_with_dt(&mut self, dt_secs: f32, screens: &[ScreenRect]) -> StepOutput {
         let prev_origin = self.origin;
+        let mut tray_status_changed = false;
+
+        // 1. Drain any non-blocking updates emitted by the background `tray.sock` bridge thread.
+        let mut pending_updates = Vec::new();
+        if let Some(ref bridge) = self.bridge {
+            while let Some(update) = bridge.try_recv() {
+                pending_updates.push(update);
+            }
+        }
+        for update in pending_updates {
+            if self.tray_connection != update.connection {
+                self.tray_connection = update.connection;
+                tray_status_changed = true;
+            }
+            self.preferred_action = update.preferred_action;
+            self.controller.handle_event(PetEvent::TrayStatus {
+                unread_count: update.unread_count,
+                active_demands: update.active_demands,
+                urgent_pulse: update.urgent_pulse,
+            });
+            if let Some(notif) = update.notification {
+                self.bubble.show(notif.text, 5.2, notif.action);
+            } else if update.unread_count == 0
+                && matches!(
+                    self.bubble.active().map(|b| &b.action),
+                    Some(BubbleAction::OpenRoom(_) | BubbleAction::OpenTray)
+                )
+            {
+                self.bubble.dismiss();
+            }
+        }
+
+        // 2. Advance `--demo tour` state showcase cycle when active.
+        if let Some(idx) = self.demo_tour_step {
+            self.demo_tour_timer += dt_secs;
+            if self.demo_tour_timer >= 2.2 {
+                self.demo_tour_timer = 0.0;
+                let next_idx = idx + 1;
+                if next_idx < DEMO_TOUR_SEQUENCE.len() {
+                    self.demo_tour_step = Some(next_idx);
+                    let (state, caption) = DEMO_TOUR_SEQUENCE[next_idx];
+                    if next_idx == DEMO_TOUR_SEQUENCE.len() - 1 {
+                        // Show Focused watch expression with active demand signal.
+                        self.controller.handle_event(PetEvent::TrayStatus {
+                            unread_count: 0,
+                            active_demands: 1,
+                            urgent_pulse: false,
+                        });
+                    } else {
+                        self.controller.handle_event(PetEvent::TrayStatus {
+                            unread_count: 0,
+                            active_demands: 0,
+                            urgent_pulse: false,
+                        });
+                        self.controller.handle_event(PetEvent::DemoState(state));
+                    }
+                    self.bubble.show(caption, 2.3, BubbleAction::Dismiss);
+                } else {
+                    self.demo_tour_step = None;
+                    self.controller.handle_event(PetEvent::TrayStatus {
+                        unread_count: 0,
+                        active_demands: 0,
+                        urgent_pulse: false,
+                    });
+                    self.bubble
+                        .show("8 种状态演示完毕，恢复自由陪伴～", 3.0, BubbleAction::Dismiss);
+                }
+            }
+        }
+
         let (pose, motion) = self.controller.tick(dt_secs);
         self.bubble.tick(dt_secs);
+        self.sync_bridge_pace();
 
         // Apply horizontal roaming motion inside the current monitor's visible work area.
         if !self.dragging && !self.is_suspended() && motion.dx.abs() > 0.001 {
@@ -679,6 +853,7 @@ impl PetSession {
             next_interval,
             is_suspended: self.is_suspended(),
             is_stealth: self.stealth_hidden,
+            tray_status_changed,
         }
     }
 }
@@ -745,6 +920,7 @@ mod tests {
 
         let opts = LaunchOptions {
             config_path: Some(cfg_path.clone()),
+            offline: true,
             ..LaunchOptions::default()
         };
         let mut session = PetSession::new(2.0, &screens, &opts);

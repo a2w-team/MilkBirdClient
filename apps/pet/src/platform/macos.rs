@@ -12,6 +12,7 @@
 //! - Native frosted-glass `NSVisualEffectView` + `PingFang SC` (`NSTextField`) speech bubble panel
 //!   with automatic screen-edge avoidance.
 
+use crate::bridge::launcher::{activate_milkbird_tray, dispatch_action_async};
 use crate::bubble::{BubbleAction, BubbleLayout, ScreenRect};
 use crate::platform::{LaunchOptions, MenuCommand, PET_WINDOW_SIZE, PetSession};
 use crate::state::BehaviorMode;
@@ -40,13 +41,11 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CALayer, CATransaction};
 use std::cell::{Cell, RefCell};
-use std::process::Command;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 const DRAG_THRESHOLD_PT: f64 = 3.5;
 const POINTER_THROTTLE_MS: u128 = 75;
-const MILK_BIRD_TRAY_BUNDLE_ID: &str = "cn.fordece.milkbird.tray";
 
 // Menu item tags for clean target/action dispatch.
 const TAG_OPEN_TRAY: isize = 100;
@@ -56,6 +55,7 @@ const TAG_MODE_EDGE: isize = 103;
 const TAG_DEMO_FEED: isize = 104;
 const TAG_DEMO_PAT: isize = 105;
 const TAG_DEMO_ALERT: isize = 106;
+const TAG_DEMO_TOUR: isize = 111;
 const TAG_TOGGLE_SLEEP: isize = 107;
 const TAG_TOGGLE_STEALTH: isize = 108;
 const TAG_RESET_POS: isize = 109;
@@ -375,13 +375,6 @@ fn detect_frontmost_fullscreen(mtm: MainThreadMarker) -> bool {
     false
 }
 
-/// Wake or launch the MilkBird Tray app using macOS `open -b` (zero edits to `apps/tray/`).
-fn activate_milkbird_tray() {
-    let _ = Command::new("open")
-        .args(["-b", MILK_BIRD_TRAY_BUNDLE_ID])
-        .spawn();
-}
-
 fn menu_command_from_tag(tag: isize) -> Option<MenuCommand> {
     match tag {
         TAG_OPEN_TRAY => Some(MenuCommand::OpenMilkBirdTray),
@@ -391,6 +384,7 @@ fn menu_command_from_tag(tag: isize) -> Option<MenuCommand> {
         TAG_DEMO_FEED => Some(MenuCommand::DemoFeed),
         TAG_DEMO_PAT => Some(MenuCommand::DemoPat),
         TAG_DEMO_ALERT => Some(MenuCommand::DemoAlert),
+        TAG_DEMO_TOUR => Some(MenuCommand::DemoTour),
         TAG_TOGGLE_SLEEP => Some(MenuCommand::ToggleSleep),
         TAG_TOGGLE_STEALTH => Some(MenuCommand::ToggleStealth),
         TAG_RESET_POS => Some(MenuCommand::ResetPosition),
@@ -438,6 +432,15 @@ fn build_context_menu(
     let menu = NSMenu::initWithTitle(mtm.alloc(), &menu_title);
     menu.setAutoenablesItems(false);
 
+    // Live tray connection / unread status header (non-clickable info row).
+    let status_title = NSString::from_str(&session.tray_status_label());
+    let empty_key = NSString::from_str("");
+    let status_header = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &status_title, None, &empty_key)
+    };
+    status_header.setEnabled(false);
+    menu.addItem(&status_header);
+
     add_menu_item(mtm, &menu, "打开奶鸟俱乐部托盘", TAG_OPEN_TRAY, delegate, false);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
@@ -471,6 +474,7 @@ fn build_context_menu(
     add_menu_item(mtm, &menu, "投喂小鱼干", TAG_DEMO_FEED, delegate, false);
     add_menu_item(mtm, &menu, "摸摸小奶鸟", TAG_DEMO_PAT, delegate, false);
     add_menu_item(mtm, &menu, "测试通知气泡", TAG_DEMO_ALERT, delegate, false);
+    add_menu_item(mtm, &menu, "演示：轮播全部 8 种状态", TAG_DEMO_TOUR, delegate, false);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let sleep_label = if session.state() == crate::state::PetState::Sleep {
@@ -512,6 +516,9 @@ fn run_tick_and_schedule(rt_rc: &Rc<RefCell<SharedRuntime>>, mtm: MainThreadMark
     }
     if step.rendered_new_frame {
         rt.upload_current_frame();
+    }
+    if step.tray_status_changed {
+        rt.refresh_status_menu(mtm);
     }
     rt.sync_bubble(step.bubble);
     rt.schedule_next_tick(step.next_interval);
@@ -874,14 +881,21 @@ define_class!(
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, _event: &NSEvent) {
-            let action = {
+            let (action, socket_path) = {
                 let mut rt = self.ivars().runtime.borrow_mut();
                 let act = rt.session.on_bubble_click();
+                let sock = rt.session.socket_path().to_path_buf();
                 rt.sync_bubble(None);
-                act
+                rt.session.request_tray_refresh();
+                (act, sock)
             };
-            if let Some(BubbleAction::OpenTray | BubbleAction::OpenRoom(_)) = action {
-                activate_milkbird_tray();
+            if let Some(act) = action {
+                match act {
+                    BubbleAction::OpenRoom(_) | BubbleAction::OpenTray => {
+                        dispatch_action_async(socket_path, act);
+                    }
+                    BubbleAction::Dismiss => {}
+                }
             }
         }
     }
