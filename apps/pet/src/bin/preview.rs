@@ -1,16 +1,10 @@
 //! Visual preview exporter & performance benchmark CLI for MilkBird Pet core (M1).
 //!
-//! Exports:
-//! - Individual `@2x` Retina PNGs for key poses
-//! - `milkbird-showcase.png`: 8 behavioral states on split light/dark backdrops
-//! - `milkbird-customization.png`: 4 hairstyles (row 1) + 4 body shapes (row 2)
-//!
-//! Prints measured single-frame rasterization & hit-test latency benchmarks.
+//! Exports `@2x` Retina PNGs for key poses plus a combined 4x2 split light/dark showcase sheet,
+//! and prints measured single-frame rasterization & hit-test latency benchmarks.
 
-use milkbird_pet::model::{
-    BodyShape, EyeExpression, HairStyle, PetAppearance, PetPose, PetRig, PropKind,
-};
-use milkbird_pet::render::{PetRenderer, render_showcase_sheet, render_variant_sheet};
+use milkbird_pet::model::{EyeExpression, PetPose, PetRig, PropKind};
+use milkbird_pet::render::{PetRenderer, render_showcase_sheet};
 use milkbird_pet::scheduler::{FrameDecision, FrameScheduler};
 use milkbird_pet::state::{PetController, PetEvent, PetState};
 use std::env;
@@ -48,75 +42,6 @@ fn showcase_poses() -> Vec<(&'static str, PetPose)> {
     ]
 }
 
-fn customization_variants() -> Vec<(&'static str, PetAppearance, PetPose)> {
-    let idle = PetPose::default();
-    vec![
-        // Row 1: Hairstyles 1-4 (自然呆毛 / 元气双马尾 / 霸总大背头 / 憨萌蘑菇头)
-        (
-            "hair_natural_ahoge",
-            PetAppearance::default().with_hair(HairStyle::NaturalAhoge),
-            idle,
-        ),
-        (
-            "hair_twin_tails",
-            PetAppearance::default().with_hair(HairStyle::TwinTails),
-            idle,
-        ),
-        (
-            "hair_slick_back",
-            PetAppearance::default().with_hair(HairStyle::SlickBack),
-            idle,
-        ),
-        (
-            "hair_mushroom_bob",
-            PetAppearance::default().with_hair(HairStyle::MushroomBob),
-            idle,
-        ),
-        // Row 2: Hairstyles 5-8 (奶咖卷刘海 / 俏皮双丸子 / 葬爱爆炸头 / 银粉杀马特)
-        (
-            "hair_curly_bangs",
-            PetAppearance::default().with_hair(HairStyle::CurlyBangs),
-            idle,
-        ),
-        (
-            "hair_twin_buns",
-            PetAppearance::default().with_hair(HairStyle::TwinBuns),
-            idle,
-        ),
-        (
-            "hair_shamate_spike",
-            PetAppearance::default().with_hair(HairStyle::ShamateSpike),
-            idle,
-        ),
-        (
-            "hair_shamate_flame",
-            PetAppearance::default().with_hair(HairStyle::ShamateFlame),
-            idle,
-        ),
-        // Row 3: 4 Body Shapes (圆团子 / 梨形大肚 / 大福麻薯 / 长条软豆)
-        (
-            "body_round_ball",
-            PetAppearance::default().with_body(BodyShape::RoundBall),
-            idle,
-        ),
-        (
-            "body_pear_chubby",
-            PetAppearance::default().with_body(BodyShape::PearChubby),
-            idle,
-        ),
-        (
-            "body_mochi_flat",
-            PetAppearance::default().with_body(BodyShape::MochiFlat),
-            idle,
-        ),
-        (
-            "body_tall_bean",
-            PetAppearance::default().with_body(BodyShape::TallBean),
-            idle,
-        ),
-    ]
-}
-
 fn main() {
     let out_dir = env::args()
         .nth(1)
@@ -136,13 +61,6 @@ fn main() {
     let sheet = render_showcase_sheet(&poses, 2.0);
     let sheet_path = out_dir.join("milkbird-showcase.png");
     sheet.save_png(&sheet_path).expect("save showcase sheet");
-
-    let variants = customization_variants();
-    let custom_sheet = render_variant_sheet(&variants, 2.0);
-    let custom_path = out_dir.join("milkbird-customization.png");
-    custom_sheet
-        .save_png(&custom_path)
-        .expect("save customization sheet");
 
     // Performance benchmark: 500 Retina @2x (320x320) frames across animated states.
     let mut ctrl = PetController::new(7);
@@ -171,25 +89,22 @@ fn main() {
     }
     let hit_ns = hit_start.elapsed().as_nanos() as f64 / 50_000.0;
 
-    // Adaptive scheduler deduplication check.
+    // Adaptive scheduler deduplication check over static suspended/settled poses.
     let mut sched = FrameScheduler::new();
     let static_pose = poses[0].1;
     for _ in 0..100 {
         let _ = sched.plan_frame(milkbird_pet::scheduler::FpsTier::IdleBreeze, &static_pose);
     }
     let stats = sched.stats();
-    let suspend_decision =
-        sched.plan_frame(milkbird_pet::scheduler::FpsTier::Suspended, &static_pose);
+    let suspend_decision = sched.plan_frame(milkbird_pet::scheduler::FpsTier::Suspended, &static_pose);
 
     println!("=== MilkBird Pet Core M1 Preview & Benchmark ===");
     println!("Output dir        : {}", out_dir.display());
     println!("Showcase sheet    : {}", sheet_path.display());
-    println!("Custom sheet      : {}", custom_path.display());
     println!(
-        "Model footprints  : PetRig={} B, PetPose={} B, PetAppearance={} B, Pixmap={}x{} ({} KB)",
+        "Model footprints  : PetRig={} B, PetPose={} B, Pixmap={}x{} ({} KB)",
         size_of::<PetRig>(),
         size_of::<PetPose>(),
-        size_of::<PetAppearance>(),
         renderer.pixel_size().0,
         renderer.pixel_size().1,
         renderer.pixels().len() / 1024
@@ -210,12 +125,6 @@ fn main() {
     );
     println!(
         "Suspended mode    : {:?}",
-        matches!(
-            suspend_decision,
-            FrameDecision::Skip {
-                next_interval: None,
-                ..
-            }
-        )
+        matches!(suspend_decision, FrameDecision::Skip { next_interval: None, .. })
     );
 }

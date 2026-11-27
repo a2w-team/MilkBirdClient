@@ -1,18 +1,10 @@
 //! Zero-jitter pre-allocated `tiny-skia` vector renderer and O(1) alpha HitMask
-//! for the original "奶鸟 (MilkBird)" IP character.
-//!
-//! Core IP anchors (preserved across all user customizations):
-//! 1. Living little flame ("小火苗") crowning the customizable hairstyle.
-//! 2. Vacant-cute hollow green eyes ("空洞绿眼睛", Nailong-inspired emerald iris + void pupil).
-//! 3. Wide expressive frog mouth ("蛙嘴": chill frog line, round "o", or joyful wide grin).
-//!
-//! User-customizable traits via [`PetAppearance`]:
-//! - 4 hairstyles (`FlameSweep`, `FluffyCloud`, `TwinSparks`, `BangsTuft`)
-//! - 4 body shapes (`RoundBall`, `PearChubby`, `MochiFlat`, `TallBean`) + fine-tune scales.
+//! for the original "奶鸟 (MilkBird)" character (coral-red plumage + pure milk-cream belly,
+//! mango-gold twin flame-foam crest, peach-tipped wings, starry espresso eyes, zero logos).
 
 use crate::model::{
-    BeakPose, BodyShape, EyeExpression, FootPose, HairStyle, LOGICAL_CANVAS_SIZE, Palette,
-    PetAppearance, PetPose, PetRig, PropKind, Rgba,
+    BeakPose, EyeExpression, FootPose, LOGICAL_CANVAS_SIZE, Palette, PetPose, PetRig, PropKind,
+    Rgba,
 };
 use std::f32::consts::PI;
 use tiny_skia::{
@@ -23,97 +15,10 @@ use tiny_skia::{
 /// Alpha threshold (out of 255) for pixel-level pointer hit-testing.
 const HIT_ALPHA_THRESHOLD: u8 = 18;
 
-/// Geometry anchors derived from the selected [`BodyShape`] so hair, face, belly, and wings
-/// always sit harmoniously on every custom body silhouette.
-#[derive(Debug, Clone, Copy)]
-struct BodyMetrics {
-    crown_y: f32,
-    head_rx: f32,
-    eye_y: f32,
-    mouth_y: f32,
-    belly_y: f32,
-    belly_scale_x: f32,
-    belly_scale_y: f32,
-    wing_y: f32,
-    front_wing_x: f32,
-    back_wing_x: f32,
-    tail_x: f32,
-    tail_y: f32,
-    foot_y_offset: f32,
-}
-
-impl BodyMetrics {
-    fn for_shape(shape: BodyShape) -> Self {
-        match shape {
-            BodyShape::RoundBall => Self {
-                crown_y: -34.0,
-                head_rx: 34.5,
-                eye_y: -12.5,
-                mouth_y: -2.0,
-                belly_y: 16.5,
-                belly_scale_x: 1.0,
-                belly_scale_y: 0.96,
-                wing_y: 5.5,
-                front_wing_x: -23.0,
-                back_wing_x: 31.0,
-                tail_x: -33.5,
-                tail_y: 15.0,
-                foot_y_offset: 36.0,
-            },
-            BodyShape::PearChubby => Self {
-                crown_y: -38.5,
-                head_rx: 27.5,
-                eye_y: -18.5,
-                mouth_y: -8.0,
-                belly_y: 14.0,
-                belly_scale_x: 1.12,
-                belly_scale_y: 1.08,
-                wing_y: 2.0,
-                front_wing_x: -21.5,
-                back_wing_x: 29.0,
-                tail_x: -36.5,
-                tail_y: 17.5,
-                foot_y_offset: 37.0,
-            },
-            BodyShape::MochiFlat => Self {
-                crown_y: -27.5,
-                head_rx: 39.5,
-                eye_y: -9.0,
-                mouth_y: 0.5,
-                belly_y: 16.0,
-                belly_scale_x: 1.16,
-                belly_scale_y: 0.78,
-                wing_y: 6.0,
-                front_wing_x: -27.5,
-                back_wing_x: 35.5,
-                tail_x: -39.5,
-                tail_y: 14.0,
-                foot_y_offset: 32.0,
-            },
-            BodyShape::TallBean => Self {
-                crown_y: -41.5,
-                head_rx: 29.0,
-                eye_y: -21.0,
-                mouth_y: -10.5,
-                belly_y: 14.5,
-                belly_scale_x: 0.88,
-                belly_scale_y: 1.15,
-                wing_y: 0.5,
-                front_wing_x: -19.5,
-                back_wing_x: 27.5,
-                tail_x: -29.0,
-                tail_y: 17.0,
-                foot_y_offset: 38.5,
-            },
-        }
-    }
-}
-
 /// Pre-allocated CPU vector renderer. Reuses its internal `Pixmap` across frames.
 pub struct PetRenderer {
     rig: PetRig,
     palette: Palette,
-    appearance: PetAppearance,
     scale: f32,
     pixmap: Pixmap,
 }
@@ -121,27 +26,16 @@ pub struct PetRenderer {
 impl PetRenderer {
     /// Allocate a renderer for the given Retina scale factor (`1.0`, `2.0`, `3.0`).
     pub fn new(scale: f32) -> Self {
-        Self::with_config(
-            PetRig::default(),
-            Palette::milkbird_original(),
-            PetAppearance::default(),
-            scale,
-        )
+        Self::with_config(PetRig::default(), Palette::milkbird_original(), scale)
     }
 
-    pub fn with_config(
-        rig: PetRig,
-        palette: Palette,
-        appearance: PetAppearance,
-        scale: f32,
-    ) -> Self {
+    pub fn with_config(rig: PetRig, palette: Palette, scale: f32) -> Self {
         let scale = scale.clamp(1.0, 4.0);
         let px = (rig.canvas_size * scale).round().max(16.0) as u32;
         let pixmap = Pixmap::new(px, px).expect("valid pet pixmap dimensions");
         Self {
             rig,
             palette,
-            appearance: appearance.sanitized(),
             scale,
             pixmap,
         }
@@ -153,14 +47,6 @@ impl PetRenderer {
 
     pub fn palette(&self) -> Palette {
         self.palette
-    }
-
-    pub fn appearance(&self) -> PetAppearance {
-        self.appearance
-    }
-
-    pub fn set_appearance(&mut self, appearance: PetAppearance) {
-        self.appearance = appearance.sanitized();
     }
 
     pub fn scale(&self) -> f32 {
@@ -200,7 +86,7 @@ impl PetRenderer {
         self.pixmap.data()[idx] >= HIT_ALPHA_THRESHOLD
     }
 
-    /// Render the original customizable MilkBird character into the pre-allocated `Pixmap`.
+    /// Render the original 11-layer MilkBird character into the pre-allocated `Pixmap`.
     pub fn render(&mut self, pose: &PetPose) -> &Pixmap {
         self.pixmap.data_mut().fill(0);
 
@@ -208,23 +94,16 @@ impl PetRenderer {
         let anchor_x = self.rig.anchor_x + pose.offset_x;
         let ground_y = self.rig.ground_y;
         let facing = if pose.facing >= 0.0 { 1.0 } else { -1.0 };
-        let metrics = BodyMetrics::for_shape(self.appearance.body);
 
         // 1. Soft ground shadow.
         self.draw_ground_shadow(anchor_x, ground_y, pose, scale);
 
         let breath_scale_x = 1.0 + 0.018 * pose.breath;
         let breath_scale_y = 1.0 + 0.022 * pose.breath;
-        let sx = pose.scale_x * breath_scale_x * self.appearance.body_width_scale * facing;
-        let sy = pose.scale_y * breath_scale_y * self.appearance.body_height_scale;
+        let sx = pose.scale_x * breath_scale_x * facing;
+        let sy = pose.scale_y * breath_scale_y;
 
-        let base_rest = match self.appearance.body {
-            BodyShape::MochiFlat => 35.5,
-            BodyShape::TallBean => 43.0,
-            BodyShape::PearChubby => 41.5,
-            BodyShape::RoundBall => 40.5,
-        };
-        let rest_height = (base_rest - 8.0 * pose.sleep_curl) * self.appearance.body_height_scale;
+        let rest_height = 40.5 - 8.0 * pose.sleep_curl;
         let body_y = ground_y - pose.altitude - rest_height * pose.scale_y;
 
         let body_tx = Transform::from_scale(scale, scale)
@@ -237,49 +116,38 @@ impl PetRenderer {
             .pre_rotate(pose.tilt_rad.to_degrees())
             .pre_scale(facing, 1.0);
 
-        // 2. Tail feathers behind body.
-        self.draw_tail_feathers(body_tx, pose, &metrics);
-
-        // 2b. Back hair layer for hairstyles with trailing twin-tails or Shamate wolf-tail spikes!
-        self.draw_hair_back(body_tx, pose, &metrics);
+        // 2. Forked coral + mango-gold tail feathers behind body.
+        self.draw_tail_feathers(body_tx, pose);
 
         // 3. Back wing peeking cleanly on right contour.
-        self.draw_back_wing(body_tx, pose, &metrics);
+        self.draw_back_wing(body_tx, pose);
 
-        // 4. Honey-apricot little feet.
-        self.draw_feet(
-            body_rigid_tx,
-            anchor_x,
-            ground_y,
-            facing,
-            pose,
-            scale,
-            &metrics,
-        );
+        // 4. Warm honey-apricot little bird feet.
+        self.draw_feet(body_rigid_tx, anchor_x, ground_y, facing, pose, scale);
 
-        // 5. Customizable body shape (RoundBall / PearChubby / MochiFlat / TallBean).
+        // 5. Plump pear-round coral-red body + warm contour.
         self.draw_body_blob(body_tx);
 
-        // 6. Clean creamy milk-foam belly fluff (zero logos!).
-        self.draw_milk_belly(body_tx, &metrics);
+        // 6. Pure creamy milk-foam cloud-tufted belly (completely clean, zero logos!).
+        self.draw_milk_belly(body_tx);
 
-        // 7. Front sleek two-tone wing.
-        self.draw_front_wing(body_tx, pose, &metrics);
+        // 7. Sleek two-tone coral-to-peach-cream front wing.
+        self.draw_front_wing(body_tx, pose);
 
         // 8. Soft strawberry-milk cheek blushes.
-        self.draw_cheeks(body_tx, pose, &metrics);
+        self.draw_cheeks(body_tx, pose);
 
-        // 9. IP Anchor #2a: Hollow green eyes (Nailong-inspired emerald iris + void pupil).
-        self.draw_hollow_green_eyes(body_tx, pose, &metrics);
+        // 9. Expressive starry espresso-jewel eyes (7 expressions + gaze tracking).
+        self.draw_eyes(body_tx, pose);
 
-        // 10. IP Anchor #2b: Wide expressive frog mouth ("蛙嘴").
-        self.draw_frog_mouth(body_tx, pose, &metrics);
+        // 10. Cute rounded honey-apricot beak.
+        self.draw_beak(body_tx, pose);
 
-        // 11. IP Anchor #1 + Custom Hair: Customizable hairstyle crowned with the living little flame!
-        self.draw_hair_and_little_flame(body_tx, pose, &metrics);
+        // 11. Original twin-plume "flame + milk-foam" bouncy crown sprout!
+        self.draw_crown_plume(body_tx, pose);
 
-        // 12. Floating micro-prop overlay (hearts, sleep Zzz, unread pill, sparkles, focus ripple).
-        self.draw_prop(anchor_x, body_y, facing, pose, scale, &metrics);
+        // 12. Floating micro-prop overlay (hearts, sleep Zzz, unread badge, sparkles, watch ripple).
+        self.draw_prop(anchor_x, body_y, facing, pose, scale);
 
         &self.pixmap
     }
@@ -304,17 +172,7 @@ impl PetRenderer {
 
     fn draw_ground_shadow(&mut self, anchor_x: f32, ground_y: f32, pose: &PetPose, scale: f32) {
         let alt_factor = (1.0 - pose.altitude / 90.0).clamp(0.35, 1.0);
-        let shape_w = match self.appearance.body {
-            BodyShape::MochiFlat => 1.15,
-            BodyShape::PearChubby => 1.06,
-            BodyShape::TallBean => 0.88,
-            BodyShape::RoundBall => 1.0,
-        };
-        let rx = (32.5 + 4.0 * pose.sleep_curl)
-            * pose.scale_x
-            * self.appearance.body_width_scale
-            * shape_w
-            * alt_factor;
+        let rx = (32.5 + 4.0 * pose.sleep_curl) * pose.scale_x * alt_factor;
         let ry = 7.2 * alt_factor;
         if let Some(path) = ellipse_path(anchor_x, ground_y + 1.5, rx, ry) {
             let mut paint = Paint {
@@ -334,13 +192,16 @@ impl PetRenderer {
         }
     }
 
-    fn draw_tail_feathers(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
+    fn draw_tail_feathers(&mut self, body_tx: Transform, pose: &PetPose) {
+        let pivot_x = -33.0;
+        let pivot_y = 14.5;
         let wag_deg = pose.tail_angle.to_degrees() + pose.scarf_sway.to_degrees() * 0.45;
 
+        // Lower coral tail feather.
         let lower_tx = body_tx
-            .pre_translate(m.tail_x, m.tail_y + 2.0)
+            .pre_translate(pivot_x, pivot_y + 2.0)
             .pre_rotate(18.0 + wag_deg * 0.85);
-        if let Some(path) = feather_path(20.0, 6.2) {
+        if let Some(path) = feather_path(21.0, 6.4) {
             let fill = Self::solid_paint(self.palette.tail_base);
             let outline = Self::solid_paint(self.palette.outline);
             self.pixmap
@@ -354,20 +215,21 @@ impl PetRenderer {
             );
         }
 
+        // Upper gradient coral-to-mango-gold tail feather!
         let upper_tx = body_tx
-            .pre_translate(m.tail_x + 1.5, m.tail_y - 3.5)
+            .pre_translate(pivot_x + 1.5, pivot_y - 3.5)
             .pre_rotate(-14.0 + wag_deg);
-        if let Some(path) = feather_path(23.0, 6.8) {
+        if let Some(path) = feather_path(24.5, 7.2) {
             let mut paint = Paint {
                 anti_alias: true,
                 ..Paint::default()
             };
             if let Some(shader) = LinearGradient::new(
                 Point::from_xy(0.0, 0.0),
-                Point::from_xy(-23.0, 0.0),
+                Point::from_xy(-24.0, 0.0),
                 vec![
                     GradientStop::new(0.0, self.palette.tail_base.to_skia()),
-                    GradientStop::new(0.65, self.palette.flame_outer.to_skia()),
+                    GradientStop::new(0.65, self.palette.crest_base.to_skia()),
                     GradientStop::new(1.0, self.palette.tail_tip.to_skia()),
                 ],
                 SpreadMode::Pad,
@@ -390,13 +252,10 @@ impl PetRenderer {
         }
     }
 
-    fn draw_back_wing(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
+    fn draw_back_wing(&mut self, body_tx: Transform, pose: &PetPose) {
         let lift_deg = -12.0 - pose.wing_flap.to_degrees() * 1.05 - pose.wing_spread * 24.0;
         let tx = body_tx
-            .pre_translate(
-                m.back_wing_x + pose.wing_spread * 2.5,
-                m.wing_y - 1.0 - pose.wing_spread * 2.5,
-            )
+            .pre_translate(30.5 + pose.wing_spread * 2.5, 4.5 - pose.wing_spread * 2.5)
             .pre_rotate(lift_deg);
         if let Some(path) = sculpted_wing_path(1.0) {
             let mut paint = Paint {
@@ -431,13 +290,11 @@ impl PetRenderer {
         }
     }
 
-    fn draw_front_wing(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
+    fn draw_front_wing(&mut self, body_tx: Transform, pose: &PetPose) {
+        // Sleek two-tone wing resting cozily along the left flank, sweeping up happily on flap!
         let flap_deg = -2.0 + pose.wing_flap.to_degrees() * 1.15 + pose.wing_spread * 28.0;
         let tx = body_tx
-            .pre_translate(
-                m.front_wing_x - pose.wing_spread * 2.5,
-                m.wing_y - pose.wing_spread * 2.0,
-            )
+            .pre_translate(-22.5 - pose.wing_spread * 2.5, 5.5 - pose.wing_spread * 2.0)
             .pre_rotate(flap_deg);
         if let Some(path) = sculpted_wing_path(-1.0) {
             let mut paint = Paint {
@@ -462,6 +319,7 @@ impl PetRenderer {
             self.pixmap
                 .fill_path(&path, &paint, FillRule::Winding, tx, None);
 
+            // Subtle soft feather-tip highlight streak for airy illustration charm.
             let mut fe = PathBuilder::new();
             fe.move_to(-10.5, 8.5);
             fe.quad_to(-14.0, 11.2, -11.5, 13.8);
@@ -482,7 +340,6 @@ impl PetRenderer {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn draw_feet(
         &mut self,
         body_rigid_tx: Transform,
@@ -491,7 +348,6 @@ impl PetRenderer {
         facing: f32,
         pose: &PetPose,
         scale: f32,
-        m: &BodyMetrics,
     ) {
         if pose.foot_pose == FootPose::Tucked && pose.sleep_curl > 0.65 {
             let tx = Transform::from_scale(scale, scale)
@@ -524,8 +380,8 @@ impl PetRenderer {
             }
             FootPose::Dangling => {
                 let kick = (pose.foot_phase * 1.4).sin();
-                self.draw_single_foot(body_rigid_tx, -10.5, m.foot_y_offset, -22.0 + kick * 28.0);
-                self.draw_single_foot(body_rigid_tx, 11.5, m.foot_y_offset, 22.0 - kick * 28.0);
+                self.draw_single_foot(body_rigid_tx, -10.5, 36.5, -22.0 + kick * 28.0);
+                self.draw_single_foot(body_rigid_tx, 11.5, 36.5, 22.0 - kick * 28.0);
             }
         }
     }
@@ -553,58 +409,29 @@ impl PetRenderer {
         }
     }
 
-    /// Customizable body silhouettes (`RoundBall`, `PearChubby`, `MochiFlat`, `TallBean`).
     fn draw_body_blob(&mut self, body_tx: Transform) {
+        // Plump chubby pear-round designer little bird silhouette.
         let mut pb = PathBuilder::new();
-        match self.appearance.body {
-            BodyShape::RoundBall => {
-                pb.move_to(0.0, -34.5);
-                pb.cubic_to(23.5, -34.5, 39.0, -17.0, 38.2, 4.2);
-                pb.cubic_to(37.5, 23.0, 23.8, 35.0, 0.0, 35.0);
-                pb.cubic_to(-23.8, 35.0, -38.5, 23.0, -38.8, 4.2);
-                pb.cubic_to(-39.0, -17.0, -23.5, -34.5, 0.0, -34.5);
-            }
-            BodyShape::PearChubby => {
-                // Cute narrower round head smoothly flaring into a chubby Nailong-like pear belly!
-                pb.move_to(0.0, -39.0);
-                pb.cubic_to(19.0, -39.0, 28.5, -26.0, 29.0, -10.0);
-                pb.cubic_to(29.5, -1.0, 41.5, 7.0, 40.5, 19.5);
-                pb.cubic_to(39.5, 31.0, 24.5, 36.5, 0.0, 36.5);
-                pb.cubic_to(-24.5, 36.5, -40.0, 31.0, -40.8, 19.5);
-                pb.cubic_to(-41.5, 7.0, -29.5, -1.0, -29.0, -10.0);
-                pb.cubic_to(-28.5, -26.0, -19.0, -39.0, 0.0, -39.0);
-            }
-            BodyShape::MochiFlat => {
-                // Wide, low, ultra-squishy mochi daifuku silhouette!
-                pb.move_to(0.0, -28.0);
-                pb.cubic_to(28.5, -28.0, 45.0, -13.5, 44.5, 6.5);
-                pb.cubic_to(44.0, 23.0, 29.0, 31.0, 0.0, 31.0);
-                pb.cubic_to(-29.0, 31.0, -44.5, 23.0, -45.0, 6.5);
-                pb.cubic_to(-45.5, -13.5, -28.5, -28.0, 0.0, -28.0);
-            }
-            BodyShape::TallBean => {
-                // Soft upright capsule/penguin-bean silhouette!
-                pb.move_to(0.0, -42.0);
-                pb.cubic_to(21.0, -42.0, 31.5, -26.0, 31.5, -3.0);
-                pb.cubic_to(31.5, 22.0, 22.5, 37.5, 0.0, 37.5);
-                pb.cubic_to(-22.5, 37.5, -32.0, 22.0, -32.0, -3.0);
-                pb.cubic_to(-32.0, -26.0, -21.0, -42.0, 0.0, -42.0);
-            }
-        }
+        pb.move_to(0.0, -34.5);
+        pb.cubic_to(23.5, -34.5, 39.0, -17.0, 38.2, 4.2);
+        pb.cubic_to(37.5, 23.0, 23.8, 35.0, 0.0, 35.0);
+        pb.cubic_to(-23.8, 35.0, -38.5, 23.0, -38.8, 4.2);
+        pb.cubic_to(-39.0, -17.0, -23.5, -34.5, 0.0, -34.5);
         pb.close();
 
         let Some(body_path) = pb.finish() else {
             return;
         };
 
+        // Lively coral-red radial gradient with warm sunny top-right light.
         let mut grad_paint = Paint {
             anti_alias: true,
             ..Paint::default()
         };
         if let Some(shader) = RadialGradient::new(
-            Point::from_xy(8.0, -16.0),
+            Point::from_xy(8.0, -14.0),
             Point::from_xy(4.0, -4.0),
-            56.0,
+            53.0,
             vec![
                 GradientStop::new(0.0, self.palette.body_highlight.to_skia()),
                 GradientStop::new(0.60, self.palette.body_base.to_skia()),
@@ -621,13 +448,13 @@ impl PetRenderer {
             .fill_path(&body_path, &grad_paint, FillRule::Winding, body_tx, None);
 
         // Soft warm highlight on forehead crown.
-        let m = BodyMetrics::for_shape(self.appearance.body);
-        if let Some(crown) = ellipse_path(5.0, m.crown_y + 10.5, 13.5, 4.8) {
-            let sheen = Self::solid_paint(Rgba::new(255, 178, 164, 68));
+        if let Some(crown) = ellipse_path(6.0, -24.0, 14.5, 5.4) {
+            let sheen = Self::solid_paint(Rgba::new(255, 178, 164, 72));
             self.pixmap
                 .fill_path(&crown, &sheen, FillRule::Winding, body_tx, None);
         }
 
+        // Crisp berry-cocoa contour so she reads cleanly on both light & dark desktops.
         let outline = Self::solid_paint(self.palette.outline);
         self.pixmap.stroke_path(
             &body_path,
@@ -638,21 +465,20 @@ impl PetRenderer {
         );
     }
 
-    /// Pure creamy milk-foam cloud-tufted belly (zero logos, adapts to body shape).
-    fn draw_milk_belly(&mut self, body_tx: Transform, m: &BodyMetrics) {
-        let bx = 5.5;
-        let by = m.belly_y;
-        let sx = m.belly_scale_x;
-        let sy = m.belly_scale_y;
-        let tx = body_tx.pre_translate(bx, by).pre_scale(sx, sy);
+    /// Pure creamy milk-foam tummy patch with a playful 3-puff cloud-feather upper arch — ZERO logos!
+    fn draw_milk_belly(&mut self, body_tx: Transform) {
+        let bx = 7.0;
+        let by = 15.8;
 
         let mut pb = PathBuilder::new();
-        pb.move_to(-18.5, -5.0);
-        pb.cubic_to(-17.0, -13.0, -9.5, -15.2, -5.0, -11.8);
-        pb.cubic_to(-2.2, -16.8, 4.8, -16.8, 7.2, -11.6);
-        pb.cubic_to(11.8, -14.8, 18.5, -11.6, 19.4, -4.0);
-        pb.cubic_to(20.6, 8.2, 12.0, 17.0, 0.0, 17.2);
-        pb.cubic_to(-12.4, 17.2, -20.2, 8.4, -18.5, -5.0);
+        // Cute gentle scalloped 3-puff milk-foam top arch (original signature chest fluff!)
+        pb.move_to(bx - 18.5, by - 5.5);
+        pb.cubic_to(bx - 17.0, by - 13.5, bx - 9.5, by - 15.8, bx - 5.0, by - 12.2);
+        pb.cubic_to(bx - 2.2, by - 17.5, bx + 4.8, by - 17.5, bx + 7.2, by - 12.0);
+        pb.cubic_to(bx + 11.8, by - 15.2, bx + 18.5, by - 12.0, bx + 19.6, by - 4.2);
+        // Smooth plump lower milk tummy curving neatly inside the red body contour
+        pb.cubic_to(bx + 21.0, by + 8.5, bx + 12.2, by + 17.6, bx, by + 17.8);
+        pb.cubic_to(bx - 12.8, by + 17.8, bx - 20.5, by + 8.8, bx - 18.5, by - 5.5);
         pb.close();
 
         if let Some(belly) = pb.finish() {
@@ -661,8 +487,8 @@ impl PetRenderer {
                 ..Paint::default()
             };
             if let Some(shader) = RadialGradient::new(
-                Point::from_xy(2.0, -5.0),
-                Point::from_xy(0.0, 1.0),
+                Point::from_xy(bx + 2.0, by - 5.0),
+                Point::from_xy(bx, by + 1.0),
                 24.0,
                 vec![
                     GradientStop::new(0.0, self.palette.belly_highlight.to_skia()),
@@ -677,24 +503,24 @@ impl PetRenderer {
                 paint.set_color(self.palette.belly_base.to_skia());
             }
             self.pixmap
-                .fill_path(&belly, &paint, FillRule::Winding, tx, None);
+                .fill_path(&belly, &paint, FillRule::Winding, body_tx, None);
 
-            if let Some(glow) = ellipse_path(2.5, -2.0, 9.2, 5.8) {
+            // Soft milk-foam shine dot on upper tummy for silky depth.
+            if let Some(glow) = ellipse_path(bx + 2.5, by - 2.0, 9.5, 6.2) {
                 let p = Self::solid_paint(self.palette.belly_highlight.with_alpha(0.65));
                 self.pixmap
-                    .fill_path(&glow, &p, FillRule::Winding, tx, None);
+                    .fill_path(&glow, &p, FillRule::Winding, body_tx, None);
             }
         }
     }
 
-    fn draw_cheeks(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
+    fn draw_cheeks(&mut self, body_tx: Transform, pose: &PetPose) {
         let alpha = pose.blush.clamp(0.0, 1.0);
         if alpha <= 0.01 {
             return;
         }
-        let paint = Self::solid_paint(self.palette.cheek.with_alpha(alpha * 0.65));
-        let cy = m.mouth_y - 1.5;
-        for &(cx, rx, ry) in &[(-13.5, 5.8, 3.3), (24.5, 5.4, 3.1)] {
+        let paint = Self::solid_paint(self.palette.cheek.with_alpha(alpha * 0.68));
+        for &(cx, cy, rx, ry) in &[(-10.5, -2.5, 6.2, 3.6), (26.5, -2.5, 5.5, 3.4)] {
             if let Some(cheek) = ellipse_path(cx, cy, rx, ry) {
                 self.pixmap
                     .fill_path(&cheek, &paint, FillRule::Winding, body_tx, None);
@@ -702,988 +528,296 @@ impl PetRenderer {
         }
     }
 
-    /// IP Anchor #2a: Nailong-faithful hollow olive-green eyes!
-    /// Soft white eye socket (sclera visible on outer edge, no harsh cartoon ring),
-    /// deep moss-green outer iris + luminous olive-emerald lower glow + large glossy
-    /// dark-forest hollow pupil occupying the upper-center, with iconic 4-point star
-    /// catchlights when happy/excited and sloped eyelids when focused.
-    fn draw_hollow_green_eyes(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
-        let ey = m.eye_y;
-        // (center_x, center_y, inward_bias) — iris hugs slightly inward so white sclera peeks
-        // cleanly on the outer corners just like Nailong in reference image 2!
-        let eye_specs = [(-5.8f32, ey, 1.35f32), (18.8f32, ey, -1.35f32)];
-        let sclera = Self::solid_paint(self.palette.eye_sclera);
-        let pupil = Self::solid_paint(self.palette.eye_pupil);
+    /// Original starry espresso-jewel eyes with subtle warm amber lower crescent & twin white sparkles.
+    fn draw_eyes(&mut self, body_tx: Transform, pose: &PetPose) {
+        let eye_positions = [(-3.0f32, -11.0f32), (20.5f32, -11.0f32)];
+        let ink = Self::solid_paint(self.palette.eye_ink);
+        let sheen = Self::solid_paint(self.palette.eye_sheen.with_alpha(0.78));
         let sparkle = Self::solid_paint(self.palette.eye_sparkle);
-        let socket_shadow = Self::solid_paint(self.palette.outline.with_alpha(0.35));
-        let lid_lash = Self::solid_paint(self.palette.eye_pupil.with_alpha(0.85));
+        let rim = Self::solid_paint(self.palette.belly_highlight.with_alpha(0.88));
 
-        let gx = pose.gaze_x.clamp(-1.0, 1.0) * 1.4;
-        let gy = pose.gaze_y.clamp(-1.0, 1.0) * 1.1;
+        let gx = pose.gaze_x.clamp(-1.0, 1.0) * 1.5;
+        let gy = pose.gaze_y.clamp(-1.0, 1.0) * 1.2;
 
-        for &(ex, ey, inward) in &eye_specs {
-            let ix = ex + inward + gx * 0.45;
-            let iy = ey + gy * 0.45;
+        for &(ex, ey) in &eye_positions {
             match pose.eyes {
                 EyeExpression::Normal => {
-                    // 1. Subtle recessed socket shadow + soft white sclera (no hard black circle!).
-                    if let Some(sh) = ellipse_path(ex, ey - 0.4, 7.6, 7.2) {
+                    // Subtle creamy-white soft rim so dark starry eyes pop radiantly against coral-red!
+                    if let Some(halo) = ellipse_path(ex + gx * 0.4, ey + gy * 0.4, 6.2, 6.7) {
                         self.pixmap
-                            .fill_path(&sh, &socket_shadow, FillRule::Winding, body_tx, None);
+                            .fill_path(&halo, &rim, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(white) = ellipse_path(ex, ey + 0.2, 7.2, 6.7) {
+                    // Glossy deep espresso-plum eye
+                    if let Some(eye) = ellipse_path(ex + gx * 0.5, ey + gy * 0.5, 5.2, 5.7) {
                         self.pixmap
-                            .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
+                            .fill_path(&eye, &ink, FillRule::Winding, body_tx, None);
                     }
-                    // 2. Glossy Nailong olive-emerald hollow iris + large dark upper-center pupil.
-                    self.draw_nailong_green_iris(body_tx, ix, iy + 0.2, 5.5, 5.7);
-                    // 3. Soft dark upper lash curve (top only, authentic 3D plush/Nailong feel).
-                    let mut lash = PathBuilder::new();
-                    lash.move_to(ex - 6.2, ey - 2.6);
-                    lash.quad_to(ex, ey - 7.8, ex + 6.2, ey - 2.6);
-                    if let Some(lp) = lash.finish() {
+                    // Warm jewel-amber lower crescent highlight inside iris
+                    if let Some(cres) =
+                        ellipse_path(ex + gx * 0.5 + 0.4, ey + gy * 0.5 + 2.6, 2.7, 1.5)
+                    {
                         self.pixmap
-                            .stroke_path(&lp, &lid_lash, &self.stroke_outline(1.55), body_tx, None);
+                            .fill_path(&cres, &sheen, FillRule::Winding, body_tx, None);
                     }
-                    // 4. Tiny vacant upper-left pinpoint highlight (keeps center deeply hollow!).
-                    if let Some(pin) = ellipse_path(ix - 1.9, iy - 1.9, 1.15, 1.15) {
+                    // Crisp twin catchlights
+                    if let Some(hi1) =
+                        ellipse_path(ex + gx * 0.65 - 1.6, ey + gy * 0.65 - 1.9, 1.95, 1.95)
+                    {
                         self.pixmap
-                            .fill_path(&pin, &sparkle, FillRule::Winding, body_tx, None);
+                            .fill_path(&hi1, &sparkle, FillRule::Winding, body_tx, None);
+                    }
+                    if let Some(hi2) =
+                        ellipse_path(ex + gx * 0.45 + 1.8, ey + gy * 0.45 + 1.5, 0.9, 0.9)
+                    {
+                        self.pixmap
+                            .fill_path(&hi2, &sparkle, FillRule::Winding, body_tx, None);
                     }
                 }
                 EyeExpression::Blink => {
                     let mut pb = PathBuilder::new();
-                    pb.move_to(ex - 5.4, ey + 0.6);
-                    pb.quad_to(ex, ey + 3.4, ex + 5.4, ey + 0.4);
+                    pb.move_to(ex - 5.2, ey + 0.5);
+                    pb.quad_to(ex, ey + 3.2, ex + 5.2, ey + 0.3);
                     if let Some(arc) = pb.finish() {
-                        let rim = Self::solid_paint(self.palette.eye_sclera.with_alpha(0.7));
                         self.pixmap
-                            .stroke_path(&arc, &rim, &self.stroke_outline(3.8), body_tx, None);
+                            .stroke_path(&arc, &rim, &self.stroke_outline(4.2), body_tx, None);
                         self.pixmap
-                            .stroke_path(&arc, &pupil, &self.stroke_outline(2.3), body_tx, None);
+                            .stroke_path(&arc, &ink, &self.stroke_outline(2.4), body_tx, None);
                     }
                 }
                 EyeExpression::Happy => {
-                    // Exact Nailong left-pose joyful starry olive-green eyes!
-                    if let Some(sh) = ellipse_path(ex, ey - 0.3, 7.8, 7.4) {
+                    let mut pb = PathBuilder::new();
+                    pb.move_to(ex - 5.4, ey + 2.0);
+                    pb.quad_to(ex, ey - 4.8, ex + 5.4, ey + 2.0);
+                    if let Some(arc) = pb.finish() {
                         self.pixmap
-                            .fill_path(&sh, &socket_shadow, FillRule::Winding, body_tx, None);
-                    }
-                    if let Some(white) = ellipse_path(ex, ey + 0.2, 7.4, 6.9) {
+                            .stroke_path(&arc, &rim, &self.stroke_outline(4.6), body_tx, None);
                         self.pixmap
-                            .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
-                    }
-                    self.draw_nailong_green_iris(body_tx, ix, iy + 0.1, 5.7, 5.9);
-                    // Big glowing 4-point white star + mini upper-right star just like ref image 2!
-                    if let Some(star_big) = star4_path(ix - 0.5, iy - 0.2, 4.1) {
-                        self.pixmap
-                            .fill_path(&star_big, &sparkle, FillRule::Winding, body_tx, None);
-                    }
-                    if let Some(star_sm) = star4_path(ix + 2.8, iy - 2.3, 1.7) {
-                        self.pixmap
-                            .fill_path(&star_sm, &sparkle, FillRule::Winding, body_tx, None);
-                    }
-                    let mut lash = PathBuilder::new();
-                    lash.move_to(ex - 6.4, ey - 2.6);
-                    lash.quad_to(ex, ey - 8.0, ex + 6.4, ey - 2.6);
-                    if let Some(lp) = lash.finish() {
-                        self.pixmap
-                            .stroke_path(&lp, &lid_lash, &self.stroke_outline(1.5), body_tx, None);
+                            .stroke_path(&arc, &ink, &self.stroke_outline(2.6), body_tx, None);
                     }
                 }
                 EyeExpression::Drowsy => {
-                    if let Some(white) = ellipse_path(ex, ey + 0.8, 7.0, 5.4) {
+                    if let Some(halo) = ellipse_path(ex, ey + 1.0, 5.8, 4.2) {
                         self.pixmap
-                            .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
+                            .fill_path(&halo, &rim, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_nailong_green_iris(body_tx, ix, iy + 1.1, 5.1, 4.2);
+                    if let Some(eye) = ellipse_path(ex, ey + 1.2, 4.7, 3.3) {
+                        self.pixmap
+                            .fill_path(&eye, &ink, FillRule::Winding, body_tx, None);
+                    }
                     let cover = Self::solid_paint(self.palette.body_base);
-                    if let Some(lid_cover) = ellipse_path(ex, ey - 2.6, 8.0, 3.6) {
+                    if let Some(lid_cover) = ellipse_path(ex, ey - 2.0, 6.8, 3.0) {
                         self.pixmap
                             .fill_path(&lid_cover, &cover, FillRule::Winding, body_tx, None);
                     }
                     let mut pb = PathBuilder::new();
-                    pb.move_to(ex - 6.6, ey - 0.8);
-                    pb.line_to(ex + 6.6, ey - 0.4);
+                    pb.move_to(ex - 5.8, ey - 0.6);
+                    pb.line_to(ex + 5.8, ey - 0.2);
                     if let Some(lid) = pb.finish() {
                         self.pixmap
-                            .stroke_path(&lid, &pupil, &self.stroke_outline(2.1), body_tx, None);
+                            .stroke_path(&lid, &ink, &self.stroke_outline(2.2), body_tx, None);
                     }
                 }
                 EyeExpression::Surprised => {
-                    // Wide open white socket + smaller hollow Nailong green iris (hilarious shock!).
-                    if let Some(sh) = ellipse_path(ex, ey - 0.3, 8.3, 8.2) {
+                    if let Some(halo) = ellipse_path(ex, ey, 6.9, 7.4) {
                         self.pixmap
-                            .fill_path(&sh, &socket_shadow, FillRule::Winding, body_tx, None);
+                            .fill_path(&halo, &rim, FillRule::Winding, body_tx, None);
                     }
-                    if let Some(white) = ellipse_path(ex, ey + 0.1, 7.9, 7.8) {
+                    if let Some(eye) = ellipse_path(ex, ey, 5.5, 6.0) {
                         self.pixmap
-                            .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
+                            .fill_path(&eye, &ink, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_nailong_green_iris(body_tx, ex + inward * 0.5, ey, 4.9, 5.1);
-                    if let Some(pin) = ellipse_path(ex + inward * 0.5 - 1.6, ey - 1.7, 1.15, 1.15) {
+                    if let Some(cres) = ellipse_path(ex + 0.4, ey + 2.8, 2.8, 1.4) {
                         self.pixmap
-                            .fill_path(&pin, &sparkle, FillRule::Winding, body_tx, None);
+                            .fill_path(&cres, &sheen, FillRule::Winding, body_tx, None);
+                    }
+                    if let Some(hi1) = ellipse_path(ex - 1.7, ey - 2.1, 2.2, 2.2) {
+                        self.pixmap
+                            .fill_path(&hi1, &sparkle, FillRule::Winding, body_tx, None);
+                    }
+                    if let Some(hi2) = ellipse_path(ex + 1.9, ey + 1.8, 0.95, 0.95) {
+                        self.pixmap
+                            .fill_path(&hi2, &sparkle, FillRule::Winding, body_tx, None);
                     }
                     let mut brow = PathBuilder::new();
-                    brow.move_to(ex - 3.8, ey - 10.2);
-                    brow.quad_to(ex, ey - 12.2, ex + 3.8, ey - 10.2);
+                    brow.move_to(ex - 3.6, ey - 9.4);
+                    brow.quad_to(ex, ey - 11.4, ex + 3.6, ey - 9.4);
                     if let Some(b) = brow.finish() {
                         self.pixmap
-                            .stroke_path(&b, &lid_lash, &self.stroke_outline(1.75), body_tx, None);
+                            .stroke_path(&b, &ink, &self.stroke_outline(1.8), body_tx, None);
                     }
                 }
                 EyeExpression::Focused => {
-                    // Exact Nailong middle/right-pose grumpy/focused sloped upper eyelid over green eye!
-                    if let Some(white) = ellipse_path(ex, ey + 0.4, 7.2, 6.4) {
+                    if let Some(halo) = ellipse_path(ex + gx * 0.4, ey + gy * 0.4, 6.0, 6.2) {
                         self.pixmap
-                            .fill_path(&white, &sclera, FillRule::Winding, body_tx, None);
+                            .fill_path(&halo, &rim, FillRule::Winding, body_tx, None);
                     }
-                    self.draw_nailong_green_iris(body_tx, ix, iy + 0.6, 5.4, 5.2);
-                    if let Some(pin) = ellipse_path(ix - 1.7, iy - 1.2, 1.1, 1.1) {
+                    if let Some(eye) = ellipse_path(ex + gx * 0.5, ey + gy * 0.5, 5.0, 5.2) {
                         self.pixmap
-                            .fill_path(&pin, &sparkle, FillRule::Winding, body_tx, None);
+                            .fill_path(&eye, &ink, FillRule::Winding, body_tx, None);
                     }
-                    // Sloped coral-red upper eyelid clipping top-inner eye just like Nailong!
-                    let slant = if ex < 5.0 { 3.2 } else { -3.2 };
-                    let mut cover = PathBuilder::new();
-                    cover.move_to(ex - 8.5, ey - 9.5);
-                    cover.line_to(ex + 8.5, ey - 9.5);
-                    cover.line_to(ex + 8.5, ey - 3.8 + slant);
-                    cover.line_to(ex - 8.5, ey - 3.8 - slant);
-                    cover.close();
-                    if let Some(cp) = cover.finish() {
-                        let body_p = Self::solid_paint(self.palette.body_base);
+                    if let Some(cres) =
+                        ellipse_path(ex + gx * 0.5 + 0.3, ey + gy * 0.5 + 2.3, 2.5, 1.3)
+                    {
                         self.pixmap
-                            .fill_path(&cp, &body_p, FillRule::Winding, body_tx, None);
+                            .fill_path(&cres, &sheen, FillRule::Winding, body_tx, None);
                     }
+                    if let Some(hi1) =
+                        ellipse_path(ex + gx * 0.7 - 1.5, ey + gy * 0.7 - 1.7, 1.9, 1.9)
+                    {
+                        self.pixmap
+                            .fill_path(&hi1, &sparkle, FillRule::Winding, body_tx, None);
+                    }
+                    let slant = if ex < 5.0 { 1.8 } else { -1.8 };
                     let mut brow = PathBuilder::new();
-                    brow.move_to(ex - 6.8, ey - 3.8 - slant);
-                    brow.line_to(ex + 6.8, ey - 3.8 + slant);
+                    brow.move_to(ex - 5.2, ey - 7.8 - slant * 0.5);
+                    brow.line_to(ex + 5.2, ey - 7.8 + slant * 0.5);
                     if let Some(b) = brow.finish() {
                         self.pixmap
-                            .stroke_path(&b, &lid_lash, &self.stroke_outline(2.15), body_tx, None);
+                            .stroke_path(&b, &ink, &self.stroke_outline(2.1), body_tx, None);
                     }
                 }
                 EyeExpression::Sleeping => {
                     let mut pb = PathBuilder::new();
-                    pb.move_to(ex - 5.4, ey - 0.4);
-                    pb.quad_to(ex, ey + 4.2, ex + 5.4, ey - 0.4);
+                    pb.move_to(ex - 5.2, ey - 0.5);
+                    pb.quad_to(ex, ey + 4.0, ex + 5.2, ey - 0.5);
                     if let Some(arc) = pb.finish() {
-                        let rim = Self::solid_paint(self.palette.eye_sclera.with_alpha(0.7));
                         self.pixmap
-                            .stroke_path(&arc, &rim, &self.stroke_outline(3.8), body_tx, None);
+                            .stroke_path(&arc, &rim, &self.stroke_outline(4.2), body_tx, None);
                         self.pixmap
-                            .stroke_path(&arc, &pupil, &self.stroke_outline(2.3), body_tx, None);
+                            .stroke_path(&arc, &ink, &self.stroke_outline(2.4), body_tx, None);
                     }
                 }
             }
         }
     }
 
-    /// Nailong-faithful glossy olive-emerald iris with large deep dark-forest upper-center pupil.
-    /// The bright translucent green ring glows primarily around the lower & side crescent, while
-    /// the top/center melts into a deep hollow void pupil (zero heap allocation).
-    fn draw_nailong_green_iris(&mut self, body_tx: Transform, cx: f32, cy: f32, rx: f32, ry: f32) {
-        // 1. Deep moss-green outer iris rim.
-        if let Some(rim) = ellipse_path(cx, cy, rx, ry) {
-            let paint = Self::solid_paint(self.palette.eye_green_outer);
-            self.pixmap
-                .fill_path(&rim, &paint, FillRule::Winding, body_tx, None);
-        }
-        // 2. Luminous olive-emerald green glow shifted slightly downward to form Nailong's green lower crescent!
-        if let Some(glow) = ellipse_path(cx, cy + ry * 0.14, rx * 0.85, ry * 0.80) {
-            let paint = Self::solid_paint(self.palette.eye_green_inner);
-            self.pixmap
-                .fill_path(&glow, &paint, FillRule::Winding, body_tx, None);
-        }
-        // 3. Deep hollow dark-forest pupil occupying upper-center ~74% of the iris!
-        if let Some(pup) = ellipse_path(cx, cy - ry * 0.10, rx * 0.72, ry * 0.74) {
-            let paint = Self::solid_paint(self.palette.eye_pupil);
-            self.pixmap
-                .fill_path(&pup, &paint, FillRule::Winding, body_tx, None);
-        }
-    }
-
-    /// IP Anchor #2b: Nailong-inspired expressive frog mouth ("奶龙同款嘴型")!
-    /// - `HappyOpen`: Wide joyful D-grin with TWO iconic tiny white fangs + rosy tongue (left ref).
-    /// - `Closed` + `Focused`: Grumpy pouty downward arc `︵` (middle ref).
-    /// - `Closed` (idle/chill): Clean minimalist curved smile arc `︶`.
-    /// - `Chirp`: Cute small upright dark `"o"` mouth (right ref).
-    fn draw_frog_mouth(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
-        let mx = 6.5;
-        let my = m.mouth_y;
-        let line = Self::solid_paint(self.palette.mouth_line);
+    /// Cute rounded honey-apricot little beak.
+    fn draw_beak(&mut self, body_tx: Transform, pose: &PetPose) {
+        let bx = 9.0;
+        let by = -4.2;
+        let outline = Self::solid_paint(self.palette.outline);
 
         match pose.beak {
             BeakPose::Closed => {
                 let mut pb = PathBuilder::new();
-                if pose.eyes == EyeExpression::Focused {
-                    // Middle Nailong reference: cute grumpy downward pouty arc `︵`!
-                    pb.move_to(mx - 6.8, my + 2.2);
-                    pb.quad_to(mx, my - 2.6, mx + 6.8, my + 2.2);
-                } else {
-                    // Clean, minimalist single-curve relaxed frog/Nailong smile arc (no bumpy cat-w).
-                    pb.move_to(mx - 7.8, my - 0.6);
-                    pb.quad_to(mx, my + 3.2, mx + 7.8, my - 0.6);
-                }
-                if let Some(path) = pb.finish() {
-                    self.pixmap
-                        .stroke_path(&path, &line, &self.stroke_outline(2.1), body_tx, None);
-                }
-            }
-            BeakPose::Chirp => {
-                // Right Nailong reference: cute small upright dark oval "o" mouth!
-                if let Some(o_mouth) = ellipse_path(mx, my + 1.4, 3.1, 4.4) {
-                    let cavity = Self::solid_paint(self.palette.eye_pupil);
-                    self.pixmap
-                        .fill_path(&o_mouth, &cavity, FillRule::Winding, body_tx, None);
-                    self.pixmap.stroke_path(
-                        &o_mouth,
-                        &line,
-                        &self.stroke_outline(1.1),
-                        body_tx,
-                        None,
-                    );
-                }
-            }
-            BeakPose::HappyOpen => {
-                // Left Nailong reference: big joyful wide open D-grin + TWO TINY WHITE FANGS + rosy tongue!
-                let mut pb = PathBuilder::new();
-                pb.move_to(mx - 10.6, my - 2.4);
-                pb.quad_to(mx, my - 1.2, mx + 10.6, my - 2.4);
-                pb.cubic_to(mx + 10.4, my + 7.6, mx + 5.2, my + 10.6, mx, my + 10.6);
-                pb.cubic_to(mx - 5.2, my + 10.6, mx - 10.4, my + 7.6, mx - 10.6, my - 2.4);
+                pb.move_to(bx - 5.4, by - 0.5);
+                pb.quad_to(bx + 0.4, by - 4.6, bx + 6.2, by - 0.4);
+                pb.quad_to(bx + 0.4, by + 4.6, bx - 5.4, by - 0.5);
                 pb.close();
-                if let Some(mouth) = pb.finish() {
-                    let cavity = Self::solid_paint(self.palette.mouth_cavity);
+                if let Some(path) = pb.finish() {
+                    let fill = Self::solid_paint(self.palette.beak_base);
                     self.pixmap
-                        .fill_path(&mouth, &cavity, FillRule::Winding, body_tx, None);
-
-                    // Rosy lower tongue curve inside the grin.
-                    if let Some(tongue) = ellipse_path(mx, my + 6.6, 6.2, 3.2) {
-                        let tp = Self::solid_paint(self.palette.mouth_tongue);
-                        self.pixmap
-                            .fill_path(&tongue, &tp, FillRule::Winding, body_tx, None);
-                    }
-
-                    // Two iconic Nailong tiny white upper fangs on the left & right corners!
-                    let fang_paint = Self::solid_paint(self.palette.eye_sparkle);
-                    for &side in &[-1.0f32, 1.0f32] {
-                        let fx = mx + side * 6.8;
-                        let mut fang = PathBuilder::new();
-                        fang.move_to(fx - side * 1.9, my - 1.9);
-                        fang.line_to(fx + side * 1.6, my - 2.1);
-                        fang.line_to(fx + side * 0.1, my + 1.4);
-                        fang.close();
-                        if let Some(fp) = fang.finish() {
-                            self.pixmap
-                                .fill_path(&fp, &fang_paint, FillRule::Winding, body_tx, None);
-                        }
-                    }
-
+                        .fill_path(&path, &fill, FillRule::Winding, body_tx, None);
+                    self.pixmap
+                        .stroke_path(&path, &outline, &self.stroke_outline(1.85), body_tx, None);
+                }
+                if let Some(hi) = ellipse_path(bx + 0.1, by - 1.4, 2.4, 1.05) {
+                    let p = Self::solid_paint(self.palette.beak_top.with_alpha(0.85));
+                    self.pixmap
+                        .fill_path(&hi, &p, FillRule::Winding, body_tx, None);
+                }
+            }
+            BeakPose::Chirp | BeakPose::HappyOpen => {
+                let open = if pose.beak == BeakPose::HappyOpen {
+                    4.6
+                } else {
+                    2.8
+                };
+                if let Some(mouth) = ellipse_path(bx + 0.2, by + 1.2, 4.3, open * 0.75) {
+                    let inner = Self::solid_paint(self.palette.beak_inner);
+                    self.pixmap
+                        .fill_path(&mouth, &inner, FillRule::Winding, body_tx, None);
                     self.pixmap.stroke_path(
                         &mouth,
-                        &line,
-                        &self.stroke_outline(1.9),
+                        &outline,
+                        &self.stroke_outline(1.75),
                         body_tx,
                         None,
                     );
                 }
+                let mut top = PathBuilder::new();
+                top.move_to(bx - 5.6, by - 0.4);
+                top.quad_to(bx + 0.4, by - 5.4, bx + 6.4, by - 0.4);
+                top.quad_to(bx + 0.4, by + 1.5, bx - 5.6, by - 0.4);
+                top.close();
+                if let Some(path) = top.finish() {
+                    let fill = Self::solid_paint(self.palette.beak_top);
+                    self.pixmap
+                        .fill_path(&path, &fill, FillRule::Winding, body_tx, None);
+                    self.pixmap
+                        .stroke_path(&path, &outline, &self.stroke_outline(1.85), body_tx, None);
+                }
             }
         }
     }
 
-    /// Back-layer hair drawn behind the body (twin-tails, Shamate back spikes & wolf-tail)
-    /// for true 2.5D chibi depth!
-    fn draw_hair_back(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
-        let sway_deg = pose.ahoge_angle.to_degrees() + pose.scarf_sway.to_degrees() * 0.5;
-        let crown_tx = body_tx.pre_translate(0.0, m.crown_y);
-        let head_scale_x = m.head_rx / 34.5;
-        let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
-        let outline = Self::solid_paint(self.palette.outline);
-
-        match self.appearance.hair {
-            HairStyle::TwinTails => {
-                // Bouncy flowing twin-tails sweeping outward & downward behind both sides of the head!
-                let fill = Self::solid_paint(self.palette.hair_cocoa);
-                let hi = Self::solid_paint(self.palette.hair_cocoa_hi);
-                for &side in &[-1.0f32, 1.0f32] {
-                    let tx = cap_tx
-                        .pre_translate(side * 28.0, 10.0)
-                        .pre_rotate(side * -6.0 + sway_deg * 0.65);
-                    let mut pb = PathBuilder::new();
-                    pb.move_to(0.0, -4.0);
-                    pb.cubic_to(side * 14.0, -6.0, side * 22.0, 8.0, side * 18.5, 25.5);
-                    pb.cubic_to(side * 15.0, 32.0, side * 7.5, 31.5, side * 5.0, 24.0);
-                    pb.cubic_to(side * 8.0, 22.0, side * 9.0, 14.0, side * 2.0, 6.0);
-                    pb.close();
-                    if let Some(p) = pb.finish() {
-                        self.pixmap
-                            .fill_path(&p, &fill, FillRule::Winding, tx, None);
-                        if let Some(sh) = ellipse_path(side * 11.5, 9.0, 3.2, 8.5) {
-                            self.pixmap
-                                .fill_path(&sh, &hi, FillRule::Winding, tx, None);
-                        }
-                        self.pixmap.stroke_path(
-                            &p,
-                            &outline,
-                            &self.stroke_outline(self.rig.outline_width * 0.85),
-                            tx,
-                            None,
-                        );
-                    }
-                }
-            }
-            HairStyle::ShamateSpike => {
-                // Huge dramatic Shamate spiky sea-urchin halo exploding outward around the head!
-                let fill = Self::solid_paint(self.palette.hair_shamate_dark);
-                let cyan = Self::solid_paint(self.palette.hair_shamate_cyan);
-                let tx = cap_tx.pre_rotate(sway_deg * 0.25);
-                let mut pb = PathBuilder::new();
-                pb.move_to(-32.0, 24.0);
-                // Left exploding spikes
-                pb.line_to(-50.0, 16.0);
-                pb.line_to(-37.0, 10.0);
-                pb.line_to(-52.0, 0.0);
-                pb.line_to(-34.0, -3.0);
-                pb.line_to(-43.0, -16.0);
-                pb.line_to(-22.0, -10.0);
-                // Top-left & top-right jagged rockstar peaks (leaving small center saddle for floating flame)
-                pb.line_to(-24.0, -24.0);
-                pb.line_to(-8.0, -12.0);
-                pb.line_to(10.0, -12.0);
-                pb.line_to(26.0, -25.0);
-                pb.line_to(24.0, -9.0);
-                // Right exploding spikes
-                pb.line_to(45.0, -15.0);
-                pb.line_to(35.0, -2.0);
-                pb.line_to(52.0, 2.0);
-                pb.line_to(38.0, 11.0);
-                pb.line_to(49.0, 18.0);
-                pb.line_to(32.0, 24.0);
-                pb.close();
-                if let Some(p) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&p, &fill, FillRule::Winding, tx, None);
-                    self.pixmap.stroke_path(
-                        &p,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.82),
-                        tx,
-                        None,
-                    );
-                }
-                // Electric cyan streak on two outer Shamate spikes!
-                let mut streak = PathBuilder::new();
-                streak.move_to(-37.0, 0.0);
-                streak.line_to(-50.0, 0.5);
-                streak.line_to(-40.0, 7.0);
-                streak.close();
-                streak.move_to(37.0, -1.0);
-                streak.line_to(50.0, 2.0);
-                streak.line_to(39.0, 8.0);
-                streak.close();
-                if let Some(sp) = streak.finish() {
-                    self.pixmap
-                        .fill_path(&sp, &cyan, FillRule::Winding, tx, None);
-                }
-            }
-            HairStyle::ShamateFlame => {
-                // Iconic silver-white Shamate wolf-tail mullet spikes fanning out behind the lower cheeks!
-                let fill = Self::solid_paint(self.palette.hair_shamate_silver);
-                let pink = Self::solid_paint(self.palette.hair_shamate_pink);
-                let tx = cap_tx.pre_rotate(sway_deg * 0.35);
-                let mut pb = PathBuilder::new();
-                pb.move_to(-32.0, 14.0);
-                pb.line_to(-48.0, 22.0);
-                pb.line_to(-36.0, 26.0);
-                pb.line_to(-46.0, 38.0);
-                pb.line_to(-28.0, 34.0);
-                pb.line_to(28.0, 34.0);
-                pb.line_to(47.0, 37.0);
-                pb.line_to(36.0, 25.0);
-                pb.line_to(49.0, 20.0);
-                pb.line_to(32.0, 13.0);
-                pb.close();
-                if let Some(p) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&p, &fill, FillRule::Winding, tx, None);
-                    self.pixmap.stroke_path(
-                        &p,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.8),
-                        tx,
-                        None,
-                    );
-                }
-                // Neon-magenta wolf-tail tip accents!
-                let mut tips = PathBuilder::new();
-                tips.move_to(-39.0, 31.0);
-                tips.line_to(-46.0, 38.0);
-                tips.line_to(-33.0, 34.0);
-                tips.close();
-                tips.move_to(39.0, 30.0);
-                tips.line_to(47.0, 37.0);
-                tips.line_to(34.0, 33.0);
-                tips.close();
-                if let Some(tp) = tips.finish() {
-                    self.pixmap
-                        .fill_path(&tp, &pink, FillRule::Winding, tx, None);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// IP Anchor #1 + Custom Hairstyle: Renders 8 distinct, natural/fun hairstyles (from cute twin-tails,
-    /// mushroom bob, curly bangs, and slick-back to wild Shamate spikes!) with the signature
-    /// reference-image-1 Little Flame ("小火苗") floating cleanly in mid-air above the hairstyle!
-    fn draw_hair_and_little_flame(&mut self, body_tx: Transform, pose: &PetPose, m: &BodyMetrics) {
+    /// Original bouncy twin-plume "flame + milk-foam" crown sprout!
+    /// Loosely evokes fiery bird energy with a soft-curved mango-gold plume + creamy side curl.
+    fn draw_crown_plume(&mut self, body_tx: Transform, pose: &PetPose) {
         let sway_deg = pose.ahoge_angle.to_degrees() + pose.scarf_sway.to_degrees() * 0.35;
-        let crown_tx = body_tx.pre_translate(0.0, m.crown_y);
-        let head_scale_x = m.head_rx / 34.5;
-        let cap_tx = crown_tx.pre_scale(head_scale_x, 1.0);
+        let tx = body_tx.pre_translate(1.5, -33.2).pre_rotate(sway_deg);
         let outline = Self::solid_paint(self.palette.outline);
 
-        // Step A: Draw front/crown customizable hairstyle (8 distinct styles).
-        // Returns local clearance `hair_top_y` so the floating little flame hovers cleanly above it.
-        let hair_top_y: f32 = match self.appearance.hair {
-            HairStyle::NaturalAhoge => {
-                // Style 1: "自然呆毛" — Seamless curved twin-strand bird ahoge.
-                let tx = crown_tx.pre_translate(1.0, 1.0).pre_rotate(sway_deg * 0.55);
-                let mut pb = PathBuilder::new();
-                pb.move_to(-3.5, 1.5);
-                pb.cubic_to(-7.5, -4.5, -4.5, -13.0, 3.8, -13.5);
-                pb.cubic_to(-0.5, -9.8, 1.0, -5.0, 1.8, -1.2);
-                pb.cubic_to(4.8, -6.5, 10.5, -7.2, 10.2, -2.5);
-                pb.cubic_to(7.2, -2.8, 4.8, -0.4, 3.8, 1.8);
-                pb.close();
-                if let Some(p) = pb.finish() {
-                    let fill = Self::solid_paint(self.palette.hair_base);
-                    self.pixmap
-                        .fill_path(&p, &fill, FillRule::Winding, tx, None);
-                    self.pixmap.stroke_path(
-                        &p,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        tx,
-                        None,
-                    );
-                    if let Some(seam) = ellipse_path(0.3, 2.5, 5.2, 2.6) {
-                        self.pixmap
-                            .fill_path(&seam, &fill, FillRule::Winding, tx, None);
-                    }
-                }
-                -11.5
-            }
-            HairStyle::TwinTails => {
-                // Style 2: "元气双马尾" — Cocoa cap with feathery air bangs + golden twin-tail ribbons!
-                let fill = Self::solid_paint(self.palette.hair_cocoa);
-                let hi = Self::solid_paint(self.palette.hair_cocoa_hi);
-                let gold = Self::solid_paint(self.palette.hair_tie_gold);
-
-                let mut pb = PathBuilder::new();
-                pb.move_to(-33.5, 19.0);
-                pb.cubic_to(-35.0, 3.5, -22.5, -5.2, 0.0, -5.2);
-                pb.cubic_to(22.5, -5.2, 35.0, 3.5, 33.5, 19.0);
-                pb.quad_to(28.5, 19.5, 26.5, 13.5);
-                pb.line_to(18.5, 14.0);
-                pb.line_to(13.5, 9.5);
-                pb.line_to(9.5, 14.2);
-                pb.line_to(-3.5, 14.2);
-                pb.line_to(-7.5, 9.8);
-                pb.line_to(-12.5, 14.0);
-                pb.line_to(-26.5, 13.5);
-                pb.quad_to(-28.5, 19.5, -33.5, 19.0);
-                pb.close();
-                if let Some(hair) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&hair, &fill, FillRule::Winding, cap_tx, None);
-                    for &(sx, rx) in &[(-10.0, 7.0), (10.5, 7.5)] {
-                        if let Some(sh) = ellipse_path(sx, 2.5, rx, 1.9) {
-                            self.pixmap
-                                .fill_path(&sh, &hi, FillRule::Winding, cap_tx, None);
-                        }
-                    }
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        cap_tx,
-                        None,
-                    );
-                }
-                // Cute golden ribbon ties clamping the left & right twin-tail roots!
-                for &side in &[-1.0f32, 1.0f32] {
-                    if let Some(tie) = ellipse_path(side * 32.0, 10.5, 4.2, 3.4) {
-                        self.pixmap
-                            .fill_path(&tie, &gold, FillRule::Winding, cap_tx, None);
-                        self.pixmap.stroke_path(
-                            &tie,
-                            &outline,
-                            &self.stroke_outline(1.5),
-                            cap_tx,
-                            None,
-                        );
-                    }
-                }
-                -5.5
-            }
-            HairStyle::SlickBack => {
-                // Style 3: "霸总大背头" — Glossy sculpted pompadour / slicked-back boss hair
-                // swept cleanly up & back off the forehead with crisp comb highlight lines!
-                let mut pb = PathBuilder::new();
-                pb.move_to(-34.0, 17.0);
-                // Sharp sculpted sideburns sweeping up into dramatic tall pompadour wave
-                pb.cubic_to(-36.5, 2.0, -26.0, -10.5, -8.0, -11.5);
-                pb.cubic_to(6.0, -12.5, 24.0, -9.5, 31.0, -2.0);
-                // Back-swept cowlick tail at upper-right
-                pb.quad_to(37.5, 3.5, 34.0, 16.5);
-                // Clean masculine hairline exposing forehead boldly above the green eyes!
-                pb.quad_to(29.5, 16.5, 27.5, 10.0);
-                pb.cubic_to(18.0, 5.5, 10.0, 4.2, 1.0, 7.2);
-                pb.cubic_to(-9.5, 4.0, -20.5, 5.8, -27.5, 10.5);
-                pb.quad_to(-29.5, 17.5, -34.0, 17.0);
-                pb.close();
-
-                if let Some(hair) = pb.finish() {
-                    let mut paint = Paint {
-                        anti_alias: true,
-                        ..Paint::default()
-                    };
-                    if let Some(shader) = LinearGradient::new(
-                        Point::from_xy(-10.0, -12.0),
-                        Point::from_xy(10.0, 16.0),
-                        vec![
-                            GradientStop::new(0.0, self.palette.hair_jet_hi.to_skia()),
-                            GradientStop::new(0.45, self.palette.hair_jet.to_skia()),
-                            GradientStop::new(1.0, self.palette.eye_pupil.to_skia()),
-                        ],
-                        SpreadMode::Pad,
-                        Transform::identity(),
-                    ) {
-                        paint.shader = shader;
-                    } else {
-                        paint.set_color(self.palette.hair_jet.to_skia());
-                    }
-                    self.pixmap
-                        .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
-
-                    // Sleek combed-back pomade gloss streaks!
-                    let gloss = Self::solid_paint(self.palette.hair_jet_hi.with_alpha(0.85));
-                    let mut streaks = PathBuilder::new();
-                    streaks.move_to(-18.0, 0.5);
-                    streaks.quad_to(-4.0, -7.8, 16.0, -4.5);
-                    streaks.move_to(-10.0, 3.0);
-                    streaks.quad_to(4.0, -3.5, 22.0, -0.5);
-                    if let Some(sp) = streaks.finish() {
-                        self.pixmap.stroke_path(
-                            &sp,
-                            &gloss,
-                            &self.stroke_outline(2.0),
-                            cap_tx,
-                            None,
-                        );
-                    }
-
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        cap_tx,
-                        None,
-                    );
-                }
-                -11.0
-            }
-            HairStyle::MushroomBob => {
-                // Style 4: "憨萌蘑菇头" — Plump dome-shaped chestnut bowl/mushroom cut with thick
-                // rounded straight bangs & glossy angel-ring highlight!
-                let mut pb = PathBuilder::new();
-                pb.move_to(-38.0, 18.5);
-                pb.cubic_to(-41.5, -1.0, -26.0, -10.5, 0.0, -10.5);
-                pb.cubic_to(26.0, -10.5, 41.5, -1.0, 38.0, 18.5);
-                // Classic plush straight-curved mushroom rim right across the brow line
-                pb.quad_to(31.0, 21.0, 27.0, 14.5);
-                pb.quad_to(0.0, 16.2, -27.0, 14.5);
-                pb.quad_to(-31.0, 21.0, -38.0, 18.5);
-                pb.close();
-
-                if let Some(hair) = pb.finish() {
-                    let mut paint = Paint {
-                        anti_alias: true,
-                        ..Paint::default()
-                    };
-                    if let Some(shader) = LinearGradient::new(
-                        Point::from_xy(0.0, -10.5),
-                        Point::from_xy(0.0, 20.0),
-                        vec![
-                            GradientStop::new(0.0, self.palette.hair_chestnut_hi.to_skia()),
-                            GradientStop::new(0.55, self.palette.hair_chestnut.to_skia()),
-                            GradientStop::new(1.0, self.palette.hair_cocoa.to_skia()),
-                        ],
-                        SpreadMode::Pad,
-                        Transform::identity(),
-                    ) {
-                        paint.shader = shader;
-                    } else {
-                        paint.set_color(self.palette.hair_chestnut.to_skia());
-                    }
-                    self.pixmap
-                        .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
-
-                    // Iconic shiny mushroom-cut angel ring highlight across the dome!
-                    let ring_paint =
-                        Self::solid_paint(self.palette.hair_cream.with_alpha(0.55));
-                    let mut ring = PathBuilder::new();
-                    ring.move_to(-22.0, 4.0);
-                    ring.quad_to(0.0, -2.5, 22.0, 4.0);
-                    if let Some(rp) = ring.finish() {
-                        self.pixmap.stroke_path(
-                            &rp,
-                            &ring_paint,
-                            &self.stroke_outline(3.2),
-                            cap_tx,
-                            None,
-                        );
-                    }
-
-                    // Tiny subtle bang texture lines.
-                    let notch = Self::solid_paint(self.palette.outline.with_alpha(0.45));
-                    let mut lines = PathBuilder::new();
-                    for &lx in &[-13.0, 1.5, 14.0] {
-                        lines.move_to(lx, 10.5);
-                        lines.line_to(lx, 15.2);
-                    }
-                    if let Some(lp) = lines.finish() {
-                        self.pixmap.stroke_path(
-                            &lp,
-                            &notch,
-                            &self.stroke_outline(1.5),
-                            cap_tx,
-                            None,
-                        );
-                    }
-
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        cap_tx,
-                        None,
-                    );
-                }
-                -10.2
-            }
-            HairStyle::CurlyBangs => {
-                // Style 5: "奶咖卷刘海" — Cozy milk-tea caramel wavy hair with fluffy curly bangs
-                // and bouncy rolled side curls framing the cheeks!
-                let mut pb = PathBuilder::new();
-                pb.move_to(-35.5, 21.5);
-                pb.cubic_to(-38.0, 3.5, -24.5, -7.2, 0.0, -7.2);
-                pb.cubic_to(24.5, -7.2, 38.0, 3.5, 35.5, 21.5);
-                // Fluffy curled wave edge across forehead & cheeks
-                pb.cubic_to(34.5, 26.5, 26.5, 24.0, 26.0, 16.5);
-                pb.cubic_to(22.0, 20.5, 14.5, 19.0, 13.5, 12.8);
-                pb.cubic_to(8.5, 19.0, 1.5, 18.8, -1.5, 12.5);
-                pb.cubic_to(-6.0, 19.2, -14.0, 19.0, -16.5, 13.2);
-                pb.cubic_to(-21.5, 19.2, -26.5, 18.0, -26.8, 16.5);
-                pb.cubic_to(-27.5, 24.0, -34.5, 26.5, -35.5, 21.5);
-                pb.close();
-
-                if let Some(hair) = pb.finish() {
-                    let mut paint = Paint {
-                        anti_alias: true,
-                        ..Paint::default()
-                    };
-                    if let Some(shader) = LinearGradient::new(
-                        Point::from_xy(0.0, -7.0),
-                        Point::from_xy(0.0, 22.0),
-                        vec![
-                            GradientStop::new(0.0, self.palette.belly_highlight.to_skia()),
-                            GradientStop::new(0.45, self.palette.hair_cream.to_skia()),
-                            GradientStop::new(1.0, self.palette.hair_cream_shade.to_skia()),
-                        ],
-                        SpreadMode::Pad,
-                        Transform::identity(),
-                    ) {
-                        paint.shader = shader;
-                    } else {
-                        paint.set_color(self.palette.hair_cream.to_skia());
-                    }
-                    self.pixmap
-                        .fill_path(&hair, &paint, FillRule::Winding, cap_tx, None);
-
-                    // Cute subtle curl swirl strokes inside the bangs!
-                    let swirl_p = Self::solid_paint(self.palette.hair_cream_shade);
-                    let mut sw = PathBuilder::new();
-                    sw.move_to(-10.0, 13.0);
-                    sw.quad_to(-6.5, 9.2, -2.5, 12.2);
-                    sw.move_to(5.0, 13.0);
-                    sw.quad_to(9.0, 9.2, 12.8, 12.2);
-                    if let Some(sp) = sw.finish() {
-                        self.pixmap.stroke_path(
-                            &sp,
-                            &swirl_p,
-                            &self.stroke_outline(1.7),
-                            cap_tx,
-                            None,
-                        );
-                    }
-
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        cap_tx,
-                        None,
-                    );
-                }
-                -7.2
-            }
-            HairStyle::TwinBuns => {
-                // Style 6: "俏皮双丸子" — Cocoa side-parted curtain bangs + symmetric round twin buns.
-                let bun_fill = Self::solid_paint(self.palette.hair_cocoa);
-                let bun_hi = Self::solid_paint(self.palette.hair_cocoa_hi);
-                let tie_gold = Self::solid_paint(self.palette.hair_tie_gold);
-
-                for &side in &[-1.0f32, 1.0f32] {
-                    let btx = cap_tx
-                        .pre_translate(side * 24.5, 1.5)
-                        .pre_rotate(side * (8.0 + sway_deg * 0.3));
-                    if let Some(bun) = ellipse_path(0.0, 0.0, 10.5, 9.8) {
-                        self.pixmap
-                            .fill_path(&bun, &bun_fill, FillRule::Winding, btx, None);
-                        if let Some(sh) = ellipse_path(-side * 2.2, -3.2, 4.2, 2.4) {
-                            self.pixmap
-                                .fill_path(&sh, &bun_hi, FillRule::Winding, btx, None);
-                        }
-                        self.pixmap.stroke_path(
-                            &bun,
-                            &outline,
-                            &self.stroke_outline(self.rig.outline_width * 0.85),
-                            btx,
-                            None,
-                        );
-                    }
-                    let mut tie = PathBuilder::new();
-                    tie.move_to(-side * 8.2, 5.2);
-                    tie.quad_to(-side * 3.0, 8.8, side * 1.5, 8.5);
-                    if let Some(tp) = tie.finish() {
-                        self.pixmap
-                            .stroke_path(&tp, &tie_gold, &self.stroke_outline(3.2), btx, None);
-                    }
-                }
-
-                let mut pb = PathBuilder::new();
-                pb.move_to(-32.5, 17.5);
-                pb.cubic_to(-33.5, 3.0, -21.5, -4.5, 0.0, -4.5);
-                pb.cubic_to(21.5, -4.5, 33.5, 3.0, 32.5, 17.5);
-                pb.quad_to(24.0, 13.5, 13.5, 12.2);
-                pb.quad_to(6.0, 11.2, 2.0, 7.2);
-                pb.quad_to(-3.5, 11.5, -13.5, 12.2);
-                pb.quad_to(-24.0, 13.5, -32.5, 17.5);
-                pb.close();
-
-                if let Some(hair) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&hair, &bun_fill, FillRule::Winding, cap_tx, None);
-                    if let Some(sh) = ellipse_path(0.0, 1.5, 12.0, 2.2) {
-                        self.pixmap
-                            .fill_path(&sh, &bun_hi, FillRule::Winding, cap_tx, None);
-                    }
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.85),
-                        cap_tx,
-                        None,
-                    );
-                }
-                -5.0
-            }
-            HairStyle::ShamateSpike => {
-                // Style 7: "葬爱爆炸头" — Iconic dramatic Shamate emo-purple front jagged bangs
-                // sweeping diagonally over one green eye with an electric-cyan highlight lock!
-                let fill = Self::solid_paint(self.palette.hair_shamate_dark);
-                let cyan = Self::solid_paint(self.palette.hair_shamate_cyan);
-
-                let mut pb = PathBuilder::new();
-                pb.move_to(-34.5, 22.0);
-                pb.cubic_to(-35.5, 2.0, -23.0, -9.5, 0.0, -9.5);
-                pb.cubic_to(23.0, -9.5, 35.5, 2.0, 34.5, 21.0);
-                // Jagged dramatic emo bangs: swoops low across left eye (partially covering it!) + sharp points!
-                pb.line_to(26.5, 16.0);
-                pb.line_to(22.0, 22.5);
-                pb.line_to(14.0, 12.5);
-                pb.line_to(5.5, 23.0);
-                pb.line_to(-2.0, 14.5);
-                pb.line_to(-10.5, 27.5); // iconic Shamate eye-covering diagonal bang!
-                pb.line_to(-19.5, 16.0);
-                pb.line_to(-27.0, 25.0);
-                pb.close();
-
-                if let Some(hair) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&hair, &fill, FillRule::Winding, cap_tx, None);
-                    // Electric cyan highlight streak right on the dramatic eye-covering lock!
-                    let mut streak = PathBuilder::new();
-                    streak.move_to(-4.0, 6.0);
-                    streak.line_to(-10.2, 25.2);
-                    streak.line_to(-13.8, 12.0);
-                    streak.close();
-                    if let Some(sp) = streak.finish() {
-                        self.pixmap
-                            .fill_path(&sp, &cyan, FillRule::Winding, cap_tx, None);
-                    }
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.82),
-                        cap_tx,
-                        None,
-                    );
-                }
-                -11.5
-            }
-            HairStyle::ShamateFlame => {
-                // Style 8: "银粉杀马特" — Icy silver-white wild asymmetric swept bangs with
-                // neon-magenta Shamate streak & spiky crown ridges!
-                let fill = Self::solid_paint(self.palette.hair_shamate_silver);
-                let pink = Self::solid_paint(self.palette.hair_shamate_pink);
-
-                let mut pb = PathBuilder::new();
-                pb.move_to(-35.0, 24.0);
-                pb.cubic_to(-37.0, 2.5, -24.5, -9.5, -2.0, -9.8);
-                // Rebellious sharp silver side-crown spike
-                pb.line_to(16.0, -15.5);
-                pb.line_to(18.0, -6.5);
-                pb.cubic_to(30.0, -2.5, 37.0, 8.0, 35.5, 25.0);
-                // Asymmetric razor-sharp silver bangs sweeping boldly across the right eye!
-                pb.line_to(25.5, 27.5);
-                pb.line_to(21.0, 17.5);
-                pb.line_to(13.5, 28.5);
-                pb.line_to(4.5, 13.5);
-                pb.line_to(-5.5, 19.5);
-                pb.line_to(-12.5, 12.0);
-                pb.line_to(-24.5, 21.0);
-                pb.close();
-
-                if let Some(hair) = pb.finish() {
-                    self.pixmap
-                        .fill_path(&hair, &fill, FillRule::Winding, cap_tx, None);
-                    // Vivid neon-magenta streak slashing diagonally across the silver bangs!
-                    let mut streak = PathBuilder::new();
-                    streak.move_to(5.0, 3.0);
-                    streak.line_to(13.2, 26.2);
-                    streak.line_to(17.5, 11.5);
-                    streak.close();
-                    streak.move_to(6.0, -6.0);
-                    streak.line_to(15.5, -14.2);
-                    streak.line_to(14.5, -5.0);
-                    streak.close();
-                    if let Some(sp) = streak.finish() {
-                        self.pixmap
-                            .fill_path(&sp, &pink, FillRule::Winding, cap_tx, None);
-                    }
-                    self.pixmap.stroke_path(
-                        &hair,
-                        &outline,
-                        &self.stroke_outline(self.rig.outline_width * 0.82),
-                        cap_tx,
-                        None,
-                    );
-                }
-                -11.5
-            }
-        };
-
-        // Step B: IP Anchor #1 — The Reference-Image-1 Little Flame ("小火苗") FLOATING cleanly above the hair!
-        let hover_bob = -1.6 * pose.breath - 1.2 * pose.badge_glow;
-        let float_y = hair_top_y - 5.2 + hover_bob;
-        let flicker = 1.0 + 0.04 * pose.breath + 0.07 * pose.badge_glow;
-        let fscale = self.appearance.flame_scale * 0.78 * flicker;
-        let flame_tx = crown_tx
-            .pre_translate(1.5, float_y)
-            .pre_rotate(sway_deg * 1.15)
-            .pre_scale(fscale, fscale);
-
-        // True radial glow fading smoothly to 0% alpha (zero hard bubble edge on light or dark desktops).
-        if let Some(halo) = ellipse_path(1.0, -7.5, 18.0, 16.0) {
-            let mut glow = Paint {
-                anti_alias: true,
-                ..Paint::default()
-            };
-            if let Some(shader) = RadialGradient::new(
-                Point::from_xy(1.0, -7.5),
-                Point::from_xy(1.0, -7.5),
-                17.0,
-                vec![
-                    GradientStop::new(0.0, self.palette.flame_core.with_alpha(0.30).to_skia()),
-                    GradientStop::new(0.55, self.palette.flame_mid.with_alpha(0.10).to_skia()),
-                    GradientStop::new(1.0, self.palette.flame_mid.with_alpha(0.0).to_skia()),
-                ],
-                SpreadMode::Pad,
-                Transform::identity(),
-            ) {
-                glow.shader = shader;
-                self.pixmap
-                    .fill_path(&halo, &glow, FillRule::Winding, flame_tx, None);
-            }
+        // Secondary cheeky creamy-milk side curl (tucked slightly behind/right).
+        let mut side = PathBuilder::new();
+        side.move_to(1.5, 1.5);
+        side.cubic_to(3.8, -6.5, 11.2, -10.2, 13.4, -4.5);
+        side.cubic_to(10.0, -4.8, 7.6, -1.8, 6.2, 2.2);
+        side.close();
+        if let Some(path) = side.finish() {
+            let fill = Self::solid_paint(self.palette.crest_cream);
+            self.pixmap
+                .fill_path(&path, &fill, FillRule::Winding, tx, None);
+            self.pixmap.stroke_path(
+                &path,
+                &outline,
+                &self.stroke_outline(self.rig.outline_width * 0.85),
+                tx,
+                None,
+            );
         }
 
-        // Exact reference image 1 silhouette: sleek S-curved left flame blade + 3 sharp stepped spikes!
-        let mut flame = PathBuilder::new();
-        flame.move_to(-6.2, 2.4);
-        flame.cubic_to(-8.6, -3.5, -3.2, -10.8, -11.4, -24.5);
-        flame.cubic_to(-3.8, -19.0, -0.2, -11.4, -1.6, -4.6);
-        flame.line_to(1.8, -10.5);
-        flame.line_to(2.8, -4.8);
-        flame.line_to(7.8, -10.3);
-        flame.line_to(7.2, -4.0);
-        flame.line_to(13.8, -8.8);
-        flame.cubic_to(13.2, -3.0, 11.4, 0.8, 8.6, 2.4);
-        flame.quad_to(1.2, 5.0, -6.2, 2.4);
-        flame.close();
-
-        if let Some(flame_path) = flame.finish() {
+        // Main sweeping coral-to-mango-gold flame plume!
+        let mut main = PathBuilder::new();
+        main.move_to(-5.2, 2.2);
+        main.cubic_to(-11.2, -6.0, -7.2, -18.5, 3.8, -20.5);
+        main.cubic_to(-1.2, -14.2, 2.4, -7.2, 4.6, 1.8);
+        main.quad_to(-0.2, 3.8, -5.2, 2.2);
+        main.close();
+        if let Some(path) = main.finish() {
             let mut paint = Paint {
                 anti_alias: true,
                 ..Paint::default()
             };
+            let tip = if pose.badge_glow > 0.1 {
+                self.palette.sparkle
+            } else {
+                self.palette.crest_tip
+            };
             if let Some(shader) = LinearGradient::new(
-                Point::from_xy(-10.0, -24.5),
-                Point::from_xy(6.0, 3.5),
+                Point::from_xy(3.0, -20.0),
+                Point::from_xy(-2.0, 3.0),
                 vec![
-                    GradientStop::new(0.0, self.palette.flame_core.to_skia()),
-                    GradientStop::new(0.42, self.palette.flame_mid.to_skia()),
-                    GradientStop::new(1.0, self.palette.flame_outer.to_skia()),
+                    GradientStop::new(0.0, tip.to_skia()),
+                    GradientStop::new(0.58, self.palette.crest_base.to_skia()),
+                    GradientStop::new(1.0, self.palette.body_base.to_skia()),
                 ],
                 SpreadMode::Pad,
                 Transform::identity(),
             ) {
                 paint.shader = shader;
             } else {
-                paint.set_color(self.palette.flame_mid.to_skia());
+                paint.set_color(self.palette.crest_base.to_skia());
             }
             self.pixmap
-                .fill_path(&flame_path, &paint, FillRule::Winding, flame_tx, None);
-
-            let flame_rim = Self::solid_paint(self.palette.outline.with_alpha(0.72));
+                .fill_path(&path, &paint, FillRule::Winding, tx, None);
             self.pixmap.stroke_path(
-                &flame_path,
-                &flame_rim,
-                &self.stroke_outline(1.4),
-                flame_tx,
+                &path,
+                &outline,
+                &self.stroke_outline(self.rig.outline_width * 0.88),
+                tx,
                 None,
             );
-        }
-
-        if let Some(ember) = ellipse_path(12.2, -14.5 + hover_bob * 0.6, 1.8, 1.8) {
-            let ep = Self::solid_paint(self.palette.flame_core.with_alpha(0.9));
-            self.pixmap
-                .fill_path(&ember, &ep, FillRule::Winding, flame_tx, None);
         }
     }
 
@@ -1694,10 +828,8 @@ impl PetRenderer {
         facing: f32,
         pose: &PetPose,
         scale: f32,
-        m: &BodyMetrics,
     ) {
         let base_tx = Transform::from_scale(scale, scale);
-        let top_y = body_y + m.crown_y;
         match pose.prop {
             PropKind::None => {}
             PropKind::Hearts { phase, count } => {
@@ -1706,7 +838,7 @@ impl PetRenderer {
                     let fade = (1.0 - p).clamp(0.0, 1.0);
                     let hx =
                         anchor_x + facing * (30.0 + i as f32 * 13.0) + (p * PI * 2.0).sin() * 3.0;
-                    let hy = top_y + 8.0 - p * 22.0 - i as f32 * 7.0;
+                    let hy = body_y - 25.0 - p * 22.0 - i as f32 * 7.0;
                     let size = (6.8 - i as f32 * 1.4) * (0.8 + 0.25 * (p * PI).sin());
                     if let Some(heart) = heart_path(hx, hy, size) {
                         let fill = Self::solid_paint(self.palette.heart.with_alpha(fade));
@@ -1720,7 +852,7 @@ impl PetRenderer {
                     let p = (phase + i as f32 * 0.5).fract();
                     let fade = ((p * 3.0).min(1.0) * (1.0 - p)).clamp(0.0, 1.0);
                     let zx = anchor_x + facing * (27.0 + p * 14.0 + i as f32 * 6.0);
-                    let zy = top_y + 14.0 - p * 26.0 - i as f32 * 6.0;
+                    let zy = body_y - 17.0 - p * 26.0 - i as f32 * 6.0;
                     let s = 5.0 + i as f32 * 2.4 + p * 1.5;
                     let mut pb = PathBuilder::new();
                     pb.move_to(zx - s * 0.5, zy - s * 0.5);
@@ -1741,8 +873,8 @@ impl PetRenderer {
                 }
             }
             PropKind::UnreadBadge { count, pulse } => {
-                let bx = anchor_x + facing * 36.0;
-                let by = top_y + 3.0 - pulse * 2.5;
+                let bx = anchor_x + facing * 35.0;
+                let by = body_y - 31.0 - pulse * 2.5;
                 let halo_r = 12.2 + pulse * 4.5;
                 if let Some(halo) = ellipse_path(bx, by, halo_r, halo_r) {
                     let halo_paint = Self::solid_paint(
@@ -1808,7 +940,7 @@ impl PetRenderer {
             }
             PropKind::FocusRipple { phase } => {
                 let cx = anchor_x + facing * 14.0;
-                let cy = top_y - 11.0;
+                let cy = body_y - 45.0;
                 for i in 0..2 {
                     let p = (phase + i as f32 * 0.5).fract();
                     let r = 6.0 + p * 12.0;
@@ -1865,6 +997,7 @@ fn sculpted_wing_path(dir: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
     pb.move_to(0.0, -4.5);
     pb.cubic_to(dir * 9.5, -6.5, dir * 19.5, 0.5, dir * 18.0, 11.5);
+    // Cute gentle twin-feather scalloped tip!
     pb.quad_to(dir * 16.5, 16.5, dir * 11.5, 15.8);
     pb.quad_to(dir * 10.5, 19.5, dir * 5.2, 17.8);
     pb.cubic_to(dir * 0.5, 16.0, -dir * 3.5, 9.5, -dir * 2.5, 2.0);
@@ -1910,19 +1043,11 @@ fn star4_path(cx: f32, cy: f32, r: f32) -> Option<Path> {
     pb.finish()
 }
 
-/// Compose a multi-pose studio showcase contact sheet (4 columns x N rows) on split light/dark tiles.
+/// Compose a multi-pose studio showcase contact sheet (4 columns x 2 rows) on split light/dark tiles
+/// so silhouette legibility can be verified visually on both bright and dark macOS desktops.
 pub fn render_showcase_sheet(poses: &[(&str, PetPose)], scale: f32) -> Pixmap {
-    let items: Vec<(&str, PetAppearance, PetPose)> = poses
-        .iter()
-        .map(|&(name, pose)| (name, PetAppearance::default(), pose))
-        .collect();
-    render_variant_sheet(&items, scale)
-}
-
-/// Compose a 4-column studio showcase sheet where each tile can use a custom [`PetAppearance`].
-pub fn render_variant_sheet(items: &[(&str, PetAppearance, PetPose)], scale: f32) -> Pixmap {
     let cols = 4u32;
-    let rows = ((items.len() as u32).saturating_add(cols - 1) / cols).max(1);
+    let rows = ((poses.len() as u32).saturating_add(cols - 1) / cols).max(1);
     let cell = (LOGICAL_CANVAS_SIZE * scale).round() as u32;
     let pad = (16.0 * scale).round() as u32;
     let width = cols * cell + (cols + 1) * pad;
@@ -1935,7 +1060,7 @@ pub fn render_variant_sheet(items: &[(&str, PetAppearance, PetPose)], scale: f32
     let light_bg = Color::from_rgba8(255, 255, 255, 255);
     let dark_bg = Color::from_rgba8(30, 41, 59, 255);
 
-    for (idx, (_, appearance, pose)) in items.iter().enumerate() {
+    for (idx, (_, pose)) in poses.iter().enumerate() {
         let col = (idx as u32) % cols;
         let row = (idx as u32) / cols;
         let ox = pad + col * (cell + pad);
@@ -1960,7 +1085,6 @@ pub fn render_variant_sheet(items: &[(&str, PetAppearance, PetPose)], scale: f32
             sheet.fill_rect(rect, &p, Transform::identity(), None);
         }
 
-        renderer.set_appearance(*appearance);
         let frame = renderer.render(pose);
         sheet.draw_pixmap(
             ox as i32,
